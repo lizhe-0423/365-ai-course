@@ -4,10 +4,12 @@ import {
   MessageSquare, ChevronRight, CheckCircle, 
   RefreshCw, Award, Volume2, User, Search,
   Zap, Star, ThumbsUp, Sparkles, Send,
-  Users, Monitor, Settings, Clock, GraduationCap
+  Users, Monitor, Settings, Clock, GraduationCap,
+  PenTool, Download, Palette, X
 } from 'lucide-react'
 import { clsx } from 'clsx'
 import { twMerge } from 'tailwind-merge'
+import confetti from 'canvas-confetti'
 
 function cn(...inputs) {
   return twMerge(clsx(inputs))
@@ -31,7 +33,8 @@ const COURSES = [
     background: '《从军行七首》是唐代诗人王昌龄的组诗作品。第四首表现了守边将士的爱国激情和破敌立功的坚定决心。',
     images: [
       '/images/congjunxing.jpg', 
-    ]
+    ],
+    completed: true
   },
   { 
     id: 2, 
@@ -49,7 +52,8 @@ const COURSES = [
     background: '《春晓》是唐代诗人孟浩然隐居在鹿门山时所作。',
     images: [
       'https://images.unsplash.com/photo-1490750967868-58cb75062ed0?q=80&w=1000&auto=format&fit=crop',
-    ]
+    ],
+    completed: false
   },
   { 
     id: 3, 
@@ -68,21 +72,40 @@ const COURSES = [
     background: '《匆匆》是现代散文家朱自清写的一篇脍炙人口的散文。',
     images: [
       'https://images.unsplash.com/photo-1470071459604-3b5ec3a7fe05?q=80&w=1000&auto=format&fit=crop',
-    ]
+    ],
+    completed: false
   }
 ]
 
 export default function App() {
   const [activeCourse, setActiveCourse] = useState(COURSES[0])
-  const [activeMode, setActiveMode] = useState('video') // video, read, image, recite
+  const [activeMode, setActiveMode] = useState('video') // video, recite, ai-draw
+  const [reciteSubMode, setReciteSubMode] = useState('image') // image, no-image
   const [aiMessages, setAiMessages] = useState([
     { role: 'ai', content: '王老师，您好！我是您的智能助教。本节课《静夜思》的教学重点已准备好。' }
   ])
   const [isRecording, setIsRecording] = useState(false)
   const [showEvaluation, setShowEvaluation] = useState(false)
   const [inputMessage, setInputMessage] = useState('')
-  const [revealedLines, setRevealedLines] = useState(0)
+  const [revealedLines, setRevealedLines] = useState(0) // Control how many lines are revealed
+  const [activeTab, setActiveTab] = useState('course') // 'course' or 'workshop'
+  const [artStyle, setArtStyle] = useState('') // Selected art style
   
+  // Workshop State
+  const [workshopStep, setWorkshopStep] = useState('course-selection') // 'course-selection', 'config', 'generating', 'result'
+  const [workshopConfig, setWorkshopConfig] = useState({
+    courseId: null,
+    style: '',
+    theme: '',
+    tone: ''
+  })
+  
+  const [showReportModal, setShowReportModal] = useState(false)
+  const [reportType, setReportType] = useState('single') // single, class, weekly, monthly
+
+  const [isGeneratingImage, setIsGeneratingImage] = useState(false)
+  const [showAiDrawing, setShowAiDrawing] = useState(false)
+
   // Ref for scrolling chat to bottom
   const chatEndRef = useRef(null)
   const videoRef = useRef(null)
@@ -106,6 +129,20 @@ export default function App() {
       { role: 'ai', content: `王老师，正在为您准备《${activeCourse.title}》的教学资源...已就绪。建议先引导学生观看视频，再进行逐句朗读。` }
     ])
   }, [activeCourse])
+
+  // Reset workshop when tab changes
+  useEffect(() => {
+    if (activeTab === 'workshop') {
+       // If coming from "Reward" button (showEvaluation is true), pre-select the current course
+       if (showEvaluation) {
+         setWorkshopStep('config')
+         setWorkshopConfig(prev => ({ ...prev, courseId: activeCourse.id }))
+       } else {
+         setWorkshopStep('course-selection')
+         setWorkshopConfig({ courseId: null, style: '', theme: '', tone: '' })
+       }
+    }
+  }, [activeTab, showEvaluation, activeCourse.id])
 
   const handleSendMessage = () => {
     if (!inputMessage.trim()) return
@@ -132,15 +169,64 @@ export default function App() {
     }, 1000)
   }
 
+  const [evaluationData, setEvaluationData] = useState({
+    score: 0,
+    title: '',
+    comment: '',
+    details: [],
+    audioUrl: ''
+  })
+
+  const generateEvaluation = (course) => {
+    // Mock random performance data
+    const scores = [98, 95, 92, 100]
+    const score = scores[Math.floor(Math.random() * scores.length)]
+    
+    const titles = [
+      { name: '边塞小诗人', icon: '🏰', color: 'text-orange-500', bg: 'bg-orange-100' },
+      { name: '韵律大师', icon: '🎵', color: 'text-blue-500', bg: 'bg-blue-100' },
+      { name: '情感影帝', icon: '🎭', color: 'text-purple-500', bg: 'bg-purple-100' },
+      { name: '记忆神童', icon: '🧠', color: 'text-green-500', bg: 'bg-green-100' }
+    ]
+    const title = titles[Math.floor(Math.random() * titles.length)]
+
+    const comments = [
+      `读到“${course.content[0].substring(0, 4)}”时，你的语速控制得太棒了！仿佛真的看到了${course.title}中的画面。`,
+      `哇！特别是最后一句“${course.content[3]}”，那股豪迈的气势被你完全展现出来了！`,
+      `整体节奏感非常强，尤其是在第二句的停顿处理上，简直是教科书级别的！`,
+      `你的声音充满了感情，把诗人那种${course.meaning.substring(0, 10)}...的情感表达得淋漓尽致。`
+    ]
+    const comment = comments[Math.floor(Math.random() * comments.length)]
+
+    return {
+      score,
+      title,
+      comment,
+      details: [
+        { label: '准确度', value: '100%', color: 'text-green-600', bg: 'bg-green-50', border: 'border-green-100' },
+        { label: '流畅度', value: 'S级', color: 'text-blue-600', bg: 'bg-blue-50', border: 'border-blue-100' },
+        { label: '情感', value: '充沛', color: 'text-purple-600', bg: 'bg-purple-50', border: 'border-purple-100' }
+      ]
+    }
+  }
+
   const handleRecordToggle = () => {
     if (isRecording) {
       setIsRecording(false)
       // Simulate evaluation after recording
       setTimeout(() => {
+        const result = generateEvaluation(activeCourse)
+        setEvaluationData(result)
         setShowEvaluation(true)
+        confetti({
+          particleCount: 150,
+          spread: 80,
+          origin: { y: 0.6 },
+          colors: ['#FFD700', '#FF69B4', '#00BFFF']
+        })
         setAiMessages(prev => [...prev, { 
           role: 'ai', 
-          content: '【AI 激励点评】\n这位同学声音洪亮，自信满满！特别是在“不破楼兰终不还”这句，我听出了小男子汉的气概！继续保持这种昂扬的状态，你就是班里的小诗人！🌟' 
+          content: `【书童伴读点评】\n${result.comment}\n恭喜获得“${result.title.name}”称号！` 
         }])
       }, 1500)
     } else {
@@ -149,7 +235,596 @@ export default function App() {
     }
   }
 
+  // Updated Hint Logic: Line by Line
+  const handleRevealNextLine = () => {
+    if (revealedLines < activeCourse.content.length) {
+      setRevealedLines(prev => prev + 1)
+    }
+  }
+
+  const handleHideHints = () => {
+    setRevealedLines(0)
+  }
+
+  const handleGenerateImage = () => {
+    if (!workshopConfig.style || !workshopConfig.theme || !workshopConfig.tone) return
+    setWorkshopStep('generating')
+    
+    setTimeout(() => {
+      setWorkshopStep('result')
+      confetti({
+        particleCount: 150,
+        spread: 100,
+        origin: { y: 0.6 },
+        colors: ['#FFD700', '#FF69B4', '#00BFFF']
+      })
+    }, 3000)
+  }
+
+  // Workshop Config Handler
+  const updateWorkshopConfig = (key, value) => {
+    setWorkshopConfig(prev => ({ ...prev, [key]: value }))
+  }
+
+  const selectCourseForWorkshop = (course) => {
+    if (!course.completed) return
+    setWorkshopConfig({
+        courseId: course.id,
+        style: '',
+        theme: '',
+        tone: ''
+    })
+    setWorkshopStep('config')
+  }
+
+  const ScholarAvatar = ({ emotion = 'happy' }) => (
+    <div className="relative w-24 h-24">
+      <svg viewBox="0 0 100 100" className="w-full h-full drop-shadow-xl filter">
+        <defs>
+          <linearGradient id="skin" x1="0%" y1="0%" x2="0%" y2="100%">
+            <stop offset="0%" stopColor="#FFE0BD" />
+            <stop offset="100%" stopColor="#FFCD94" />
+          </linearGradient>
+          <linearGradient id="hat" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" stopColor="#4F46E5" />
+            <stop offset="100%" stopColor="#3730A3" />
+          </linearGradient>
+        </defs>
+        
+        {/* Hair Back */}
+        <path d="M20,50 Q10,60 15,80 Q20,90 30,90 L70,90 Q80,90 85,80 Q90,60 80,50" fill="#1A1A1A" />
+        
+        {/* Face */}
+        <circle cx="50" cy="55" r="35" fill="url(#skin)" />
+        
+        {/* Ears */}
+        <circle cx="16" cy="58" r="6" fill="url(#skin)" />
+        <circle cx="84" cy="58" r="6" fill="url(#skin)" />
+        
+        {/* Hat (Scholar Cap) */}
+        <path d="M20,35 Q50,15 80,35 L85,25 Q50,5 15,25 Z" fill="url(#hat)" />
+        <rect x="25" y="20" width="50" height="20" rx="5" fill="url(#hat)" />
+        <circle cx="50" cy="20" r="4" fill="#FCD34D" />
+        {/* Hat Wings */}
+        <path d="M15,28 L5,25 Q0,28 5,31 L15,28" fill="#3730A3" stroke="#1A1A1A" strokeWidth="1"/>
+        <path d="M85,28 L95,25 Q100,28 95,31 L85,28" fill="#3730A3" stroke="#1A1A1A" strokeWidth="1"/>
+
+        {/* Hair Front (Bangs) */}
+        <path d="M25,40 Q35,50 50,42 Q65,50 75,40" fill="none" stroke="#1A1A1A" strokeWidth="3" strokeLinecap="round" />
+
+        {/* Eyes */}
+        <g className="animate-[blink_4s_infinite]">
+          <circle cx="38" cy="58" r="3" fill="#1A1A1A" />
+          <circle cx="62" cy="58" r="3" fill="#1A1A1A" />
+        </g>
+        
+        {/* Cheeks */}
+        <circle cx="30" cy="65" r="4" fill="#FFB6C1" opacity="0.6" />
+        <circle cx="70" cy="65" r="4" fill="#FFB6C1" opacity="0.6" />
+
+        {/* Mouth */}
+        {emotion === 'happy' ? (
+          <path d="M40,70 Q50,78 60,70" fill="none" stroke="#1A1A1A" strokeWidth="2" strokeLinecap="round" />
+        ) : (
+          <path d="M40,72 Q50,85 60,72" fill="#FF9999" stroke="#1A1A1A" strokeWidth="1" />
+        )}
+      </svg>
+      
+      {/* Interactive Element: Hand waving or holding book */}
+      <div className="absolute -bottom-2 -right-2 w-10 h-10 bg-white rounded-full shadow-lg flex items-center justify-center border-2 border-indigo-100 animate-bounce">
+        <span className="text-lg">📜</span>
+      </div>
+    </div>
+  )
+
+  const renderCombinedRightCard = () => (
+    <div className="bg-white rounded-3xl overflow-hidden shadow-xl border border-indigo-50 transition-all duration-500 hover:shadow-2xl hover:scale-[1.01] group relative">
+      {/* Decorative Background - Glassmorphism Style */}
+      <div className="absolute top-0 left-0 w-full h-32 bg-gradient-to-br from-blue-400 via-indigo-500 to-purple-600">
+        <div className="absolute inset-0 opacity-20 bg-[radial-gradient(circle_at_top_right,_var(--tw-gradient-stops))] from-white via-transparent to-transparent"></div>
+        <div className="absolute bottom-0 left-0 right-0 h-16 bg-gradient-to-t from-white to-transparent"></div>
+        
+        {/* Floating shapes for decoration */}
+        <div className="absolute top-4 left-4 w-12 h-12 bg-white/10 rounded-full blur-xl animate-pulse"></div>
+        <div className="absolute top-10 right-8 w-20 h-20 bg-purple-300/20 rounded-full blur-xl"></div>
+      </div>
+      
+      {/* Avatar Header Section */}
+      <div className="relative pt-8 px-6 pb-4 z-10 flex flex-col items-center">
+        <div className="transform transition-transform duration-500 group-hover:scale-105 group-hover:-translate-y-1">
+           <ScholarAvatar emotion={showEvaluation ? 'excited' : 'happy'} />
+        </div>
+        
+        <div className="text-center mt-2">
+          <h3 className="font-bold text-xl text-slate-800 tracking-tight">Hi, 我是小书童</h3>
+          <div className="mt-2 inline-flex items-center gap-2 px-4 py-1.5 bg-indigo-50 border border-indigo-100 rounded-full shadow-sm">
+            <span className="relative flex h-2.5 w-2.5">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
+              <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-green-500"></span>
+            </span>
+            <span className="text-xs font-bold text-indigo-600">
+              {showEvaluation ? '正在为您喝彩！🎉' : '全神贯注伴读中...'}
+            </span>
+          </div>
+        </div>
+      </div>
+
+      {/* Content Body: Either Chat or Evaluation */}
+      <div className="px-6 pb-6 bg-white min-h-[200px]">
+        {!showEvaluation ? (
+          <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
+             <div className="bg-gradient-to-br from-slate-50 to-white rounded-2xl p-5 border border-slate-100 shadow-[0_2px_8px_-2px_rgba(0,0,0,0.05)] mb-4 relative group/chat">
+                <div className="absolute -top-2 left-1/2 -translate-x-1/2 w-4 h-4 bg-slate-50 rotate-45 border-t border-l border-slate-100 group-hover/chat:bg-white transition-colors"></div>
+                <p className="text-sm text-slate-600 leading-relaxed text-center font-medium">
+                   {aiMessages[aiMessages.length - 1].content}
+                </p>
+             </div>
+             <div className="flex justify-center gap-2 text-xs text-slate-400 font-medium">
+                <span className="flex items-center gap-1"><Clock className="w-3 h-3" /> 实时响应</span>
+                <span>•</span>
+                <span className="flex items-center gap-1"><Sparkles className="w-3 h-3 text-yellow-400" /> 智能纠错</span>
+             </div>
+          </div>
+        ) : (
+          <div className="animate-in zoom-in duration-500 space-y-5">
+            <div className="text-center">
+               <div className="text-4xl font-black text-transparent bg-clip-text bg-gradient-to-r from-orange-400 to-red-500 mb-1 drop-shadow-sm">
+                 🌟 超级棒
+               </div>
+               <p className="text-xs text-slate-400 font-medium">战胜了 98% 的同学</p>
+            </div>
+
+            <div className="grid grid-cols-3 gap-3">
+               <div className="bg-white p-3 rounded-2xl text-center border border-green-100 shadow-sm hover:shadow-md transition-shadow group/stat">
+                 <div className="text-[10px] text-green-500 font-bold uppercase tracking-wider mb-1 group-hover/stat:text-green-600 transition-colors">准确度</div>
+                 <div className="text-xl font-black text-slate-800 group-hover/stat:text-green-600 transition-colors">100%</div>
+               </div>
+               <div className="bg-white p-3 rounded-2xl text-center border border-blue-100 shadow-sm hover:shadow-md transition-shadow group/stat">
+                 <div className="text-[10px] text-blue-500 font-bold uppercase tracking-wider mb-1 group-hover/stat:text-blue-600 transition-colors">完整度</div>
+                 <div className="text-xl font-black text-slate-800 group-hover/stat:text-blue-600 transition-colors">S级</div>
+               </div>
+               <div className="bg-white p-3 rounded-2xl text-center border border-purple-100 shadow-sm hover:shadow-md transition-shadow group/stat">
+                 <div className="text-[10px] text-purple-500 font-bold uppercase tracking-wider mb-1 group-hover/stat:text-purple-600 transition-colors">情感</div>
+                 <div className="text-xl font-black text-slate-800 group-hover/stat:text-purple-600 transition-colors">充沛</div>
+               </div>
+            </div>
+
+            <div className="bg-amber-50 p-4 rounded-2xl border border-amber-100 text-xs text-amber-800 flex gap-3 items-start relative overflow-hidden">
+               <div className="absolute top-0 right-0 p-1 opacity-10">
+                 <Zap className="w-12 h-12" />
+               </div>
+               <div className="bg-amber-100 p-1.5 rounded-full shrink-0 text-amber-600">
+                  <Zap className="w-4 h-4" />
+               </div>
+               <p className="leading-relaxed font-medium relative z-10">声音还可以再大一点点哦，让全班同学都听到你的豪情壮志！</p>
+            </div>
+
+            <div className="pt-2 space-y-3">
+               <button 
+                 onClick={() => setActiveTab('workshop')}
+                 className="w-full py-3.5 bg-gradient-to-r from-indigo-500 via-purple-500 to-pink-500 text-white rounded-xl font-bold text-sm shadow-lg shadow-indigo-200 hover:shadow-xl hover:scale-[1.02] transition-all flex items-center justify-center gap-2 group/btn relative overflow-hidden"
+               >
+                 <div className="absolute inset-0 bg-white/20 translate-y-full group-hover/btn:translate-y-0 transition-transform duration-300"></div>
+                 <Palette className="w-4 h-4 group-hover/btn:rotate-12 transition-transform relative z-10" />
+                 <span className="relative z-10">奖励：绘制专属配图 🎁</span>
+               </button>
+               
+               <button 
+                 onClick={() => setShowReportModal(true)}
+                 className="w-full py-2.5 bg-white border border-slate-200 text-slate-600 rounded-xl font-medium text-sm hover:bg-slate-50 hover:border-slate-300 transition-colors flex items-center justify-center gap-2"
+               >
+                 <Award className="w-4 h-4" />
+                 生成学习报告
+               </button>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+
+  const RecordingButton = ({ isRecording, onClick, label = '开始背诵监测' }) => (
+    <button 
+      onClick={onClick}
+      className={cn(
+        "flex items-center gap-3 px-8 py-4 rounded-full font-bold text-lg shadow-xl transition-all transform hover:scale-105 active:scale-95",
+        isRecording 
+          ? "bg-red-500 text-white ring-4 ring-red-200 animate-pulse" 
+          : "bg-gradient-to-r from-blue-600 to-indigo-600 text-white ring-4 ring-blue-200"
+      )}
+    >
+      {isRecording ? (
+        <>
+          <div className="flex gap-1 h-4 items-center">
+            <div className="w-1 bg-white animate-[bounce_1s_infinite] h-2"></div>
+            <div className="w-1 bg-white animate-[bounce_1s_infinite_0.2s] h-4"></div>
+            <div className="w-1 bg-white animate-[bounce_1s_infinite_0.4s] h-3"></div>
+          </div>
+          <span>停止监测并生成报告</span>
+        </>
+      ) : (
+        <>
+          <Mic className="w-6 h-6" />
+          <span>{label}</span>
+        </>
+      )}
+    </button>
+  )
+
+  const ReportModal = () => (
+    <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4 animate-in fade-in duration-200">
+      <div className="bg-white rounded-2xl w-full max-w-2xl overflow-hidden shadow-2xl animate-in zoom-in-95 duration-200">
+        <div className="bg-gradient-to-r from-indigo-500 to-purple-600 p-6 text-white flex justify-between items-center">
+          <h3 className="text-xl font-bold flex items-center gap-2">
+            <Award className="w-6 h-6" />
+            学生个性化学习报告
+          </h3>
+          <button onClick={() => setShowReportModal(false)} className="hover:bg-white/20 p-1 rounded-full transition-colors">
+            <span className="text-2xl">×</span>
+          </button>
+        </div>
+        
+        <div className="p-6">
+          <div className="flex gap-2 mb-6 bg-slate-100 p-1 rounded-lg">
+            {['single', 'class', 'weekly', 'monthly'].map(type => (
+              <button
+                key={type}
+                onClick={() => setReportType(type)}
+                className={cn(
+                  "flex-1 py-2 text-sm font-medium rounded-md transition-all",
+                  reportType === type ? "bg-white text-indigo-600 shadow-sm" : "text-slate-500 hover:text-slate-700"
+                )}
+              >
+                {{single: '本次背诵', class: '本课小结', weekly: '周报', monthly: '月度总结'}[type]}
+              </button>
+            ))}
+          </div>
+
+          <div className="border-2 border-dashed border-slate-200 rounded-xl p-8 bg-slate-50 flex flex-col items-center justify-center min-h-[300px]">
+            {reportType === 'single' && (
+              <div className="text-center space-y-4 w-full">
+                <div className="flex justify-center">
+                  <div className="w-24 h-24 bg-yellow-100 rounded-full flex items-center justify-center border-4 border-yellow-300">
+                    <span className="text-4xl">{evaluationData.title.icon || '🏆'}</span>
+                  </div>
+                </div>
+                <h4 className="text-2xl font-bold text-slate-800">{evaluationData.title.name || '记忆小神童'}</h4>
+                <p className="text-slate-500">李同学在《{activeCourse.title}》背诵中表现优异！</p>
+                <div className="bg-white p-4 rounded-lg shadow-sm border border-slate-100 text-sm text-slate-600 italic">
+                  "{evaluationData.comment || '背诵流畅，情感充沛！'}"
+                </div>
+                
+                <div className="grid grid-cols-3 gap-4 mt-6">
+                  <div className="bg-white p-3 rounded-lg shadow-sm">
+                    <div className="text-xs text-slate-400">准确率</div>
+                    <div className="text-xl font-bold text-green-600">100%</div>
+                  </div>
+                  <div className="bg-white p-3 rounded-lg shadow-sm">
+                    <div className="text-xs text-slate-400">流畅度</div>
+                    <div className="text-xl font-bold text-blue-600">S级</div>
+                  </div>
+                  <div className="bg-white p-3 rounded-lg shadow-sm">
+                    <div className="text-xs text-slate-400">情感</div>
+                    <div className="text-xl font-bold text-purple-600">充沛</div>
+                  </div>
+                </div>
+              </div>
+            )}
+            
+            {reportType !== 'single' && (
+              <div className="text-center text-slate-400">
+                <div className="w-16 h-16 bg-slate-200 rounded-full mx-auto mb-4 flex items-center justify-center">
+                  <Clock className="w-8 h-8 text-slate-400" />
+                </div>
+                <p>更多维度的{reportType}数据正在分析中...</p>
+              </div>
+            )}
+          </div>
+        </div>
+
+        <div className="p-6 border-t border-slate-100 bg-slate-50 flex justify-end gap-3">
+          <button className="px-4 py-2 text-slate-600 hover:bg-slate-200 rounded-lg transition-colors">
+            发送给家长
+          </button>
+          <button className="px-6 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 shadow-md flex items-center gap-2">
+            <Download className="w-4 h-4" />
+            下载报告图片
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+
   const renderContent = () => {
+    if (activeTab === 'workshop') {
+      const selectedCourse = COURSES.find(c => c.id === workshopConfig.courseId) || activeCourse
+
+      return (
+        <div className="flex flex-col h-full bg-slate-50/50">
+          <div className="flex-1 overflow-y-auto p-8">
+            <h2 className="text-3xl font-bold text-slate-800 mb-2 flex items-center gap-3 justify-center">
+              <Palette className="w-8 h-8 text-purple-600" />
+              AI 创意绘图工坊
+            </h2>
+            <p className="text-slate-500 mb-8 text-center">
+              {workshopStep === 'course-selection' && '请选择已完成的课程进行创作'}
+              {workshopStep === 'config' && '配置您的专属画作'}
+              {workshopStep === 'generating' && 'AI 正在挥毫泼墨...'}
+              {workshopStep === 'result' && '创作完成！'}
+            </p>
+            
+            <div className="max-w-4xl mx-auto w-full">
+              {/* Step 1: Course Selection */}
+              {workshopStep === 'course-selection' && (
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
+                  {COURSES.map(course => (
+                    <button
+                      key={course.id}
+                      onClick={() => selectCourseForWorkshop(course)}
+                      disabled={!course.completed}
+                      className={cn(
+                        "relative bg-white p-6 rounded-2xl border-2 text-left transition-all duration-300 group overflow-hidden",
+                        course.completed 
+                          ? "border-slate-200 hover:border-purple-400 hover:shadow-xl hover:-translate-y-1 cursor-pointer" 
+                          : "border-slate-100 opacity-60 cursor-not-allowed"
+                      )}
+                    >
+                      <div className="flex items-center gap-4 mb-4">
+                         <div className={cn(
+                           "w-12 h-12 rounded-full flex items-center justify-center text-sm font-bold",
+                           course.completed ? "bg-purple-100 text-purple-600" : "bg-slate-100 text-slate-400"
+                         )}>
+                           {course.type === '古诗' ? '诗' : '文'}
+                         </div>
+                         <div className="flex-1 min-w-0">
+                           <h3 className="font-bold text-lg text-slate-800 truncate">{course.title}</h3>
+                           <p className="text-sm text-slate-500 truncate">{course.author}</p>
+                         </div>
+                      </div>
+                      
+                      <div className="flex items-center justify-between text-sm">
+                        <span className={cn(
+                          "px-2 py-1 rounded-md font-medium",
+                          course.completed ? "bg-green-100 text-green-700" : "bg-slate-100 text-slate-500"
+                        )}>
+                          {course.completed ? '已完成' : '未解锁'}
+                        </span>
+                        {course.completed && <ChevronRight className="w-5 h-5 text-slate-300 group-hover:text-purple-500 transition-colors" />}
+                      </div>
+
+                      {/* Locked Overlay */}
+                      {!course.completed && (
+                        <div className="absolute inset-0 bg-slate-50/50 flex items-center justify-center backdrop-blur-[1px]">
+                          <div className="bg-white/80 px-4 py-2 rounded-full shadow-sm flex items-center gap-2 text-slate-500 text-sm font-medium">
+                            <span className="text-lg">🔒</span> 请先完成学习
+                          </div>
+                        </div>
+                      )}
+                    </button>
+                  ))}
+                </div>
+              )}
+
+              {/* Step 2: Configuration */}
+              {workshopStep === 'config' && (
+                <div className="flex flex-col lg:flex-row gap-8 animate-in zoom-in-95 duration-500 min-h-[500px]">
+                   {/* Left: Poem Card (Sticky) */}
+                   <div className="lg:w-1/3 flex-shrink-0">
+                     <div className="bg-white p-8 rounded-2xl shadow-lg border border-slate-100 flex flex-col justify-center items-center text-center sticky top-8 transition-all hover:shadow-xl">
+                       <div className="w-12 h-12 bg-purple-100 rounded-full flex items-center justify-center text-purple-600 mb-4">
+                         <BookOpen className="w-6 h-6" />
+                       </div>
+                       <h3 className="font-serif text-2xl font-bold mb-6 text-slate-800 tracking-wide">{selectedCourse.title}</h3>
+                       <div className="text-xl font-serif text-slate-600 leading-loose mb-8">
+                         {selectedCourse.content.map((line, i) => (
+                           <p key={i}>{line}</p>
+                         ))}
+                       </div>
+                       <div className="bg-gradient-to-r from-purple-50 to-indigo-50 text-purple-700 px-4 py-2 rounded-full text-sm font-medium border border-purple-100">
+                         当前任务：为这首诗配图
+                       </div>
+                       <button 
+                         onClick={() => setWorkshopStep('course-selection')}
+                         className="mt-6 text-sm text-slate-400 hover:text-purple-600 underline transition-colors"
+                       >
+                         重选课程
+                       </button>
+                     </div>
+                   </div>
+                   
+                   {/* Right: Config Form */}
+                   <div className="flex-1 space-y-8 pb-12">
+                     <div className="bg-white rounded-2xl p-6 shadow-sm border border-slate-100">
+                       {/* Question 1: Style */}
+                       <div className="space-y-4 mb-8">
+                         <label className="flex items-center gap-3 text-lg font-bold text-slate-800">
+                           <div className="w-8 h-8 bg-purple-600 text-white rounded-lg flex items-center justify-center text-sm font-bold shadow-md shadow-purple-200">1</div>
+                           请选择绘画风格
+                         </label>
+                         <div className="grid grid-cols-2 gap-4">
+                           {[
+                             { id: 'ink', label: '水墨国风', icon: '🖌️', desc: '传统韵味，意境深远' },
+                             { id: 'anime', label: 'Q版动画', icon: '🎨', desc: '可爱活泼，色彩鲜明' },
+                             { id: 'oil', label: '厚涂油画', icon: '🖼️', desc: '质感厚重，光影丰富' },
+                             { id: 'pixel', label: '像素艺术', icon: '👾', desc: '复古怀旧，趣味十足' },
+                           ].map(style => (
+                             <button
+                               key={style.id}
+                               onClick={() => updateWorkshopConfig('style', style.id)}
+                               className={cn(
+                                 "relative p-4 rounded-xl border-2 text-left transition-all duration-300 group overflow-hidden",
+                                 workshopConfig.style === style.id 
+                                   ? "border-purple-600 bg-purple-50/50 shadow-md ring-2 ring-purple-100 ring-offset-2" 
+                                   : "border-slate-100 bg-white hover:border-purple-200 hover:shadow-md"
+                               )}
+                             >
+                               <div className="relative z-10">
+                                 <div className="text-3xl mb-2 group-hover:scale-110 transition-transform origin-left">{style.icon}</div>
+                                 <div className={cn("font-bold text-lg mb-1", workshopConfig.style === style.id ? "text-purple-700" : "text-slate-700")}>{style.label}</div>
+                                 <div className="text-xs text-slate-400">{style.desc}</div>
+                               </div>
+                               {workshopConfig.style === style.id && (
+                                 <div className="absolute top-2 right-2 w-5 h-5 bg-purple-600 rounded-full flex items-center justify-center">
+                                   <CheckCircle className="w-3 h-3 text-white" />
+                                 </div>
+                               )}
+                             </button>
+                           ))}
+                         </div>
+                       </div>
+
+                       {/* Question 2: Theme */}
+                       <div className="space-y-4 mb-8">
+                         <label className="flex items-center gap-3 text-lg font-bold text-slate-800">
+                           <div className="w-8 h-8 bg-purple-600 text-white rounded-lg flex items-center justify-center text-sm font-bold shadow-md shadow-purple-200">2</div>
+                           你想突出画面中的哪个元素？
+                         </label>
+                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                           {['孤城与远山', '身披金甲的将军', '漫天黄沙与战场', '月下楼兰'].map(theme => (
+                             <button
+                               key={theme}
+                               onClick={() => updateWorkshopConfig('theme', theme)}
+                               className={cn(
+                                 "px-5 py-4 rounded-xl border-2 text-left transition-all font-medium flex items-center justify-between group",
+                                 workshopConfig.theme === theme 
+                                   ? "border-purple-600 bg-purple-50 text-purple-700 shadow-sm" 
+                                   : "border-slate-100 bg-white text-slate-600 hover:border-purple-200 hover:bg-slate-50"
+                               )}
+                             >
+                               <span>{theme}</span>
+                               {workshopConfig.theme === theme && <CheckCircle className="w-5 h-5 text-purple-600" />}
+                             </button>
+                           ))}
+                         </div>
+                       </div>
+
+                       {/* Question 3: Tone */}
+                       <div className="space-y-4">
+                         <label className="flex items-center gap-3 text-lg font-bold text-slate-800">
+                           <div className="w-8 h-8 bg-purple-600 text-white rounded-lg flex items-center justify-center text-sm font-bold shadow-md shadow-purple-200">3</div>
+                           选择画面的色调氛围
+                         </label>
+                         <div className="grid grid-cols-3 gap-4">
+                           {[
+                             { id: 'cold', label: '清冷肃杀', color: 'from-slate-200 to-slate-300' },
+                             { id: 'warm', label: '热血激昂', color: 'from-orange-100 to-red-100' },
+                             { id: 'lonely', label: '苍凉孤寂', color: 'from-amber-100 to-yellow-100' },
+                           ].map(tone => (
+                             <button
+                               key={tone.id}
+                               onClick={() => updateWorkshopConfig('tone', tone.id)}
+                               className={cn(
+                                 "p-4 rounded-xl border-2 text-center transition-all hover:scale-105 group",
+                                 workshopConfig.tone === tone.id 
+                                   ? "border-purple-600 bg-white shadow-md ring-2 ring-purple-200 ring-offset-2" 
+                                   : "border-slate-100 bg-white hover:border-purple-200 hover:shadow-md"
+                               )}
+                             >
+                               <div className={cn("w-full h-12 rounded-lg mb-3 bg-gradient-to-br shadow-inner", tone.color)}></div>
+                               <div className={cn("font-bold text-sm", workshopConfig.tone === tone.id ? "text-purple-700" : "text-slate-600")}>{tone.label}</div>
+                             </button>
+                           ))}
+                         </div>
+                       </div>
+                     </div>
+
+                     <button 
+                      onClick={handleGenerateImage}
+                      disabled={!workshopConfig.style || !workshopConfig.theme || !workshopConfig.tone}
+                      className="w-full py-4 bg-gradient-to-r from-purple-600 to-indigo-600 text-white rounded-xl font-bold text-lg hover:shadow-lg hover:scale-[1.01] active:scale-[0.99] transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-3 shadow-purple-200"
+                     >
+                       {isGeneratingImage ? (
+                         <div className="w-6 h-6 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
+                       ) : (
+                         <Sparkles className="w-6 h-6" />
+                       )}
+                       <span>开始生成作品</span>
+                     </button>
+                   </div>
+                </div>
+              )}
+
+              {/* Step 3: Generating */}
+              {workshopStep === 'generating' && (
+                 <div className="flex flex-col items-center justify-center py-20 animate-in fade-in duration-700">
+                   <div className="w-24 h-24 border-4 border-purple-200 border-t-purple-600 rounded-full animate-spin mb-8"></div>
+                   <h3 className="text-2xl font-bold text-purple-600 animate-pulse mb-2">AI 正在挥毫泼墨...</h3>
+                   <p className="text-slate-500">正在根据您的选择构图：{workshopConfig.theme} / {workshopConfig.style}</p>
+                 </div>
+              )}
+
+              {/* Step 4: Result */}
+              {workshopStep === 'result' && (
+                <div className="max-w-lg mx-auto animate-in zoom-in duration-500">
+                  <div className="bg-white p-4 rounded-2xl shadow-xl border border-purple-100 relative overflow-hidden">
+                    <div className="aspect-video bg-slate-100 rounded-xl overflow-hidden mb-4 relative group">
+                      <img 
+                        src={selectedCourse.images[0]} 
+                        className="w-full h-full object-cover" 
+                        alt="AI Generated" 
+                      />
+                      <div className="absolute top-4 left-4 bg-black/60 text-white text-xs px-2 py-1 rounded backdrop-blur-md">
+                        风格：{{ink: '水墨国风', anime: 'Q版动画', oil: '厚涂油画', pixel: '像素艺术'}[workshopConfig.style]}
+                      </div>
+                      <div className="absolute inset-0 bg-black/40 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+                        <button className="bg-white text-slate-900 px-4 py-2 rounded-full font-medium flex items-center gap-2 hover:bg-slate-100">
+                          <Download className="w-4 h-4" /> 保存作品
+                        </button>
+                      </div>
+                    </div>
+                    
+                    <div className="text-center">
+                      <h3 className="font-bold text-slate-800 mb-1">《{selectedCourse.title}》- 专属配图</h3>
+                      <p className="text-xs text-slate-500">创作者：三年级(2)班 李同学 & AI</p>
+                    </div>
+                    
+                    <div className="absolute top-4 right-4 bg-yellow-400 text-yellow-900 text-xs font-bold px-2 py-1 rounded shadow-sm rotate-12">
+                      AI 甄选
+                    </div>
+                  </div>
+                  
+                  <div className="mt-8 text-center flex gap-4 justify-center">
+                    <button 
+                      onClick={() => setWorkshopStep('config')}
+                      className="px-6 py-2 bg-slate-100 text-slate-600 rounded-lg font-medium hover:bg-slate-200 transition-colors"
+                    >
+                      再画一张
+                    </button>
+                    <button 
+                      onClick={() => setWorkshopStep('course-selection')}
+                      className="px-6 py-2 bg-purple-600 text-white rounded-lg font-medium hover:bg-purple-700 transition-colors shadow-md"
+                    >
+                      返回工坊首页
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )
+    }
+
     switch (activeMode) {
       case 'video':
         return (
@@ -177,7 +852,6 @@ export default function App() {
             
             {/* Video Chapter Navigation */}
             <div className="h-16 bg-slate-800 border-t border-slate-700 flex items-center px-4 gap-4 overflow-x-auto">
-              <span className="text-xs font-bold text-slate-400 uppercase tracking-wider shrink-0">重点节点跳转</span>
               {[
                 { label: '诗朗诵', time: 7, display: '0:07' },
                 { label: '含义解释', time: 19, display: '0:19' },
@@ -197,99 +871,164 @@ export default function App() {
             </div>
           </div>
         )
-      case 'read':
+      case 'recite':
         return (
-          <div className="flex flex-col items-center justify-center h-full p-8 overflow-y-auto">
-            <h2 className="text-3xl font-bold mb-8 text-slate-800">{activeCourse.title}</h2>
-            <div className="space-y-6 text-center">
-              {activeCourse.content.map((line, index) => (
-                <p key={index} 
-                   className="text-2xl font-serif text-slate-700 hover:text-blue-600 cursor-pointer transition-colors"
-                   onClick={() => setAiMessages(prev => [...prev, { role: 'ai', content: `【备课助手】"${line}" 教学要点：\n1. 释义：... \n2. 引导问题：...` }])}
+          <div className="flex flex-col h-full relative">
+            {/* Sub-mode Toggle */}
+            <div className="flex justify-center py-4 bg-white/50 backdrop-blur-sm border-b border-slate-200 sticky top-0 z-10">
+              <div className="bg-slate-100 p-1 rounded-lg flex gap-1">
+                <button
+                  onClick={() => setReciteSubMode('image')}
+                  className={cn(
+                    "px-4 py-2 rounded-md text-sm font-medium transition-all flex items-center gap-2",
+                    reciteSubMode === 'image'
+                      ? "bg-white text-blue-600 shadow-sm"
+                      : "text-slate-500 hover:text-slate-700"
+                  )}
                 >
-                  {line}
-                </p>
-              ))}
-            </div>
-            <div className="mt-12 flex gap-4">
-              <button 
-                onClick={handleRecordToggle}
-                className={cn(
-                  "flex items-center gap-2 px-6 py-3 rounded-full font-medium transition-all shadow-lg",
-                  isRecording 
-                    ? "bg-red-500 text-white animate-pulse" 
-                    : "bg-blue-600 text-white hover:bg-blue-700"
-                )}
-              >
-                {isRecording ? <><Mic className="w-5 h-5" /> 监听全班朗读...</> : <><Mic className="w-5 h-5" /> 启动朗读评测</>}
-              </button>
-            </div>
-          </div>
-        )
-      case 'image-recite':
-        return (
-          <div className="flex flex-col h-full p-4">
-            <div className="flex-1 bg-slate-100 rounded-xl overflow-hidden relative mb-4">
-              <img 
-                src={activeCourse.images[0]} 
-                alt="Scene" 
-                className="w-full h-full object-cover opacity-90 hover:opacity-100 transition-opacity"
-              />
-              <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent p-6">
-                <p className="text-white text-xl font-medium text-center">
-                  图文复述教学：引导学生看图背诵
-                </p>
-              </div>
-            </div>
-            <div className="h-1/3 bg-white rounded-xl border border-slate-200 p-6 overflow-y-auto">
-              <div className="space-y-4 text-center">
-                {activeCourse.content.map((line, index) => (
-                  <p key={index} 
-                     className={cn(
-                       "text-xl transition-all duration-500 cursor-pointer border-b border-transparent hover:border-slate-200 inline-block px-2",
-                       index < revealedLines ? "text-slate-800" : "text-slate-200 blur-sm hover:blur-none"
-                     )}
-                     onClick={() => setRevealedLines(prev => Math.max(prev, index + 1))}
-                  >
-                    {line}
-                  </p>
-                ))}
-              </div>
-              <div className="mt-4 text-center">
-                <button 
-                  onClick={() => setRevealedLines(prev => prev + 1)}
-                  className="text-sm text-blue-600 hover:underline"
+                  <ImageIcon className="w-4 h-4" />
+                  有图背诵
+                </button>
+                <button
+                  onClick={() => setReciteSubMode('no-image')}
+                  className={cn(
+                    "px-4 py-2 rounded-md text-sm font-medium transition-all flex items-center gap-2",
+                    reciteSubMode === 'no-image'
+                      ? "bg-white text-indigo-600 shadow-sm"
+                      : "text-slate-500 hover:text-slate-700"
+                  )}
                 >
-                  显示下一句提示
+                  <Mic className="w-4 h-4" />
+                  无图背诵
                 </button>
               </div>
             </div>
-          </div>
-        )
-      case 'recite':
-        return (
-          <div className="flex flex-col items-center justify-center h-full p-8">
-            <div className="w-32 h-32 bg-blue-100 rounded-full flex items-center justify-center mb-8 relative">
-              <Mic className="w-12 h-12 text-blue-600" />
-              {isRecording && (
-                <div className="absolute inset-0 rounded-full border-4 border-blue-400 animate-ping opacity-20"></div>
+
+            <div className="flex-1 overflow-hidden relative">
+              {reciteSubMode === 'image' ? (
+                // Image Recite Content
+                <div className="flex flex-col h-full p-4 relative">
+                  <div className="flex-1 bg-slate-100 rounded-xl overflow-hidden relative mb-4 group">
+                    <img 
+                      src={activeCourse.images[0]} 
+                      alt="Scene" 
+                      className={cn(
+                        "w-full h-full object-cover transition-all duration-700",
+                        isRecording ? "scale-110" : "scale-100"
+                      )}
+                    />
+                    <div className="absolute inset-0 bg-black/30 backdrop-blur-[2px] transition-opacity duration-500 group-hover:backdrop-blur-0 group-hover:bg-black/10"></div>
+                    
+                    {/* Floating Text Overlay */}
+                    <div className="absolute inset-0 flex flex-col items-center justify-center p-8 pointer-events-none">
+                      <div className="space-y-6 text-center max-w-2xl">
+                        {activeCourse.content.map((line, index) => (
+                          <p key={index} 
+                             className={cn(
+                               "text-3xl font-serif font-bold text-white drop-shadow-lg transition-all duration-500",
+                               index < revealedLines
+                                 ? "opacity-100 translate-y-0" 
+                                 : "opacity-0 translate-y-4"
+                             )}
+                          >
+                            {line}
+                          </p>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Hint Buttons */}
+                    <div className="absolute top-4 right-4 pointer-events-auto flex gap-2">
+                      {/* Hide Button (Only if visible) */}
+                      {revealedLines > 0 && (
+                        <button 
+                          onClick={handleHideHints}
+                          className="backdrop-blur-md bg-black/30 hover:bg-black/50 text-white w-10 h-10 rounded-full flex items-center justify-center transition-all animate-in zoom-in"
+                        >
+                          <X className="w-4 h-4" />
+                        </button>
+                      )}
+                      
+                      {/* Show/Next Button */}
+                      {revealedLines < activeCourse.content.length && (
+                        <button 
+                          onClick={handleRevealNextLine}
+                          className="backdrop-blur-md bg-white/20 hover:bg-white/30 text-white px-4 py-2 rounded-full text-sm font-medium transition-colors flex items-center gap-2"
+                        >
+                          <Sparkles className="w-4 h-4" />
+                          {revealedLines === 0 ? '显示提示' : '提示下一句'}
+                        </button>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Control Bar */}
+                  <div className="h-24 bg-white rounded-xl border border-slate-200 p-4 flex items-center justify-between shadow-sm">
+                    <div className="flex items-center gap-4">
+                      <div className="w-12 h-12 bg-blue-100 rounded-full flex items-center justify-center text-blue-600">
+                        <ImageIcon className="w-6 h-6" />
+                      </div>
+                      <div>
+                        <p className="font-bold text-slate-800">图文联想背诵</p>
+                        <p className="text-xs text-slate-500">看着图片，尝试回忆诗句</p>
+                      </div>
+                    </div>
+                    
+                    <RecordingButton 
+                      isRecording={isRecording} 
+                      onClick={handleRecordToggle}
+                    />
+                  </div>
+                </div>
+              ) : (
+                // No Image Recite Content
+                <div className="flex flex-col items-center justify-center h-full p-8 relative">
+                  <div className="w-48 h-48 bg-indigo-50 rounded-full flex items-center justify-center mb-12 relative">
+                    {isRecording ? (
+                      <>
+                        <div className="absolute inset-0 rounded-full border-4 border-indigo-200 animate-[ping_2s_infinite]"></div>
+                        <div className="absolute inset-4 rounded-full border-4 border-indigo-300 animate-[ping_2s_infinite_0.5s]"></div>
+                        <div className="w-32 h-32 bg-indigo-600 rounded-full flex items-center justify-center relative z-10 animate-pulse">
+                          <Mic className="w-12 h-12 text-white" />
+                        </div>
+                      </>
+                    ) : (
+                      <div className="w-32 h-32 bg-white border-4 border-indigo-100 rounded-full flex items-center justify-center shadow-sm">
+                        <Mic className="w-12 h-12 text-indigo-300" />
+                      </div>
+                    )}
+                  </div>
+                  
+                  <h3 className="text-3xl font-bold text-slate-800 mb-4">
+                    {isRecording ? '正在认真倾听...' : '准备好开始了吗？'}
+                  </h3>
+                  <p className="text-slate-500 mb-12 text-center max-w-md text-lg">
+                    {isRecording 
+                      ? '请大声背诵，AI 老师正在为你加油打气！' 
+                      : '脱离图片辅助，挑战纯记忆背诵，赢取“记忆小达人”称号！'}
+                  </p>
+                  
+                  <RecordingButton 
+                    isRecording={isRecording} 
+                    onClick={handleRecordToggle}
+                    label="开始无图挑战"
+                  />
+                  
+                  {/* AI Drawing Entry (Bottom right optional entry) */}
+                  {!isRecording && showEvaluation && (
+                    <div className="absolute bottom-8 right-8 animate-in slide-in-from-bottom duration-700">
+                      <button 
+                        onClick={() => setActiveTab('workshop')}
+                        className="flex items-center gap-2 bg-gradient-to-r from-pink-500 to-purple-600 text-white px-6 py-3 rounded-full shadow-lg hover:shadow-xl hover:scale-105 transition-all"
+                      >
+                        <Palette className="w-5 h-5" />
+                        <span>奖励：生成我的专属配图</span>
+                      </button>
+                    </div>
+                  )}
+                </div>
               )}
             </div>
-            <h3 className="text-2xl font-bold text-slate-800 mb-2">背诵监测与评价</h3>
-            <p className="text-slate-500 mb-8 text-center max-w-md">
-              AI 智能助教将实时监听背诵情况（支持单人或多人），并生成鼓励性评价报告。
-            </p>
-            <button 
-              onClick={handleRecordToggle}
-              className={cn(
-                "px-8 py-4 rounded-full text-lg font-bold shadow-xl transition-all transform hover:scale-105",
-                isRecording 
-                  ? "bg-red-500 text-white ring-4 ring-red-200" 
-                  : "bg-gradient-to-r from-blue-600 to-indigo-600 text-white ring-4 ring-blue-200"
-              )}
-            >
-              {isRecording ? '停止监测并生成报告' : '开始背诵监测'}
-            </button>
           </div>
         )
       default:
@@ -308,7 +1047,30 @@ export default function App() {
           </div>
         </div>
         
-        <div className="p-4">
+        {/* Navigation Tabs */}
+        <div className="p-3">
+          <div className="flex gap-1 bg-slate-100 p-1 rounded-lg mb-4">
+            <button 
+              onClick={() => setActiveTab('course')}
+              className={cn(
+                "flex-1 py-1.5 text-xs font-bold rounded-md transition-all",
+                activeTab === 'course' ? "bg-white text-blue-600 shadow-sm" : "text-slate-500 hover:text-slate-700"
+              )}
+            >
+              课程学习
+            </button>
+            <button 
+              onClick={() => setActiveTab('workshop')}
+              className={cn(
+                "flex-1 py-1.5 text-xs font-bold rounded-md transition-all flex items-center justify-center gap-1",
+                activeTab === 'workshop' ? "bg-white text-purple-600 shadow-sm" : "text-slate-500 hover:text-slate-700"
+              )}
+            >
+              <Palette className="w-3 h-3" />
+              创意工坊
+            </button>
+          </div>
+          
           <div className="relative">
             <Search className="absolute left-3 top-2.5 w-4 h-4 text-slate-400" />
             <input 
@@ -324,7 +1086,7 @@ export default function App() {
           {COURSES.map(course => (
             <button
               key={course.id}
-              onClick={() => setActiveCourse(course)}
+              onClick={() => { setActiveCourse(course); setActiveTab('course'); }}
               className={cn(
                 "w-full flex items-center gap-3 px-3 py-3 rounded-lg text-left transition-all",
                 activeCourse.id === course.id 
@@ -348,203 +1110,102 @@ export default function App() {
         </div>
         
         <div className="p-4 border-t border-slate-100">
-          <div className="flex items-center gap-3 p-2 rounded-lg hover:bg-slate-50 cursor-pointer">
-            <div className="w-8 h-8 bg-indigo-100 rounded-full flex items-center justify-center text-indigo-600">
-              <Users className="w-4 h-4" />
-            </div>
-            <div className="flex-1">
-              <p className="text-sm font-medium">三年级(2)班</p>
-              <p className="text-xs text-slate-500">当前学生: 45人</p>
-            </div>
-            <RefreshCw className="w-4 h-4 text-slate-400" />
-          </div>
         </div>
       </aside>
 
       {/* Main Content Area */}
       <main className="flex-1 flex flex-col overflow-hidden relative">
         {/* Top Navigation for Modes */}
-        <header className="h-16 bg-white border-b border-slate-200 flex items-center justify-between px-6 shadow-sm z-10">
-          <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-lg">
-            {[
-              { id: 'video', label: '视频教学', icon: Play },
-              { id: 'read', label: '朗读评测', icon: BookOpen },
-              { id: 'image-recite', label: '图文复述', icon: ImageIcon },
-              { id: 'recite', label: '背诵监测', icon: Mic },
-            ].map(mode => (
-              <button
-                key={mode.id}
-                onClick={() => setActiveMode(mode.id)}
-                className={cn(
-                  "flex items-center gap-2 px-4 py-1.5 rounded-md text-sm font-medium transition-all",
-                  activeMode === mode.id 
-                    ? "bg-white text-blue-700 shadow-sm ring-1 ring-black/5" 
-                    : "text-slate-500 hover:text-slate-700 hover:bg-slate-200/50"
-                )}
-              >
-                <mode.icon className="w-4 h-4" />
-                {mode.label}
-              </button>
-            ))}
-          </div>
-          
-          <div className="flex items-center gap-2">
-             <div className="flex gap-1">
-               <button className="p-2 text-slate-500 hover:bg-slate-100 rounded-full" title="教学计时">
-                 <Clock className="w-5 h-5" />
-               </button>
-               <button className="p-2 text-slate-500 hover:bg-slate-100 rounded-full" title="投屏模式">
-                 <Monitor className="w-5 h-5" />
-               </button>
-               <button className="p-2 text-slate-500 hover:bg-slate-100 rounded-full" title="课程设置">
-                 <Settings className="w-5 h-5" />
-               </button>
-             </div>
-             <div className="h-6 w-px bg-slate-200 mx-2"></div>
-             <button className="flex items-center gap-2 bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors shadow-sm">
-               <GraduationCap className="w-4 h-4" />
-               <span>布置作业</span>
-             </button>
-          </div>
-        </header>
+        {activeTab === 'course' && (
+          <header className="h-16 bg-white border-b border-slate-200 flex items-center justify-between px-6 shadow-sm z-10">
+            <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-lg">
+              {[
+                { id: 'video', label: '视频教学', icon: Play },
+                { id: 'recite', label: '智能背诵', icon: Mic },
+              ].map(mode => (
+                <button
+                  key={mode.id}
+                  onClick={() => setActiveMode(mode.id)}
+                  className={cn(
+                    "flex items-center gap-2 px-4 py-1.5 rounded-md text-sm font-medium transition-all",
+                    activeMode === mode.id 
+                      ? "bg-white text-blue-700 shadow-sm ring-1 ring-black/5" 
+                      : "text-slate-500 hover:text-slate-700 hover:bg-slate-200/50"
+                  )}
+                >
+                  <mode.icon className="w-4 h-4" />
+                  {mode.label}
+                </button>
+              ))}
+            </div>
+            
+            <div className="flex items-center gap-2">
+               <div className="h-6 w-px bg-slate-200 mx-2"></div>
+            </div>
+          </header>
+        )}
 
         {/* Content Body */}
-        <div className="flex-1 overflow-hidden relative bg-slate-50/50">
+        <div className={cn(
+          "flex-1 overflow-hidden relative bg-slate-50/50",
+          activeTab === 'workshop' ? "p-0" : "" // Adjust padding for workshop if needed
+        )}>
           {renderContent()}
         </div>
       </main>
 
       {/* Right Sidebar: AI Assistant */}
       <aside className="w-96 bg-white border-l border-slate-200 flex flex-col shadow-lg z-20">
-        <div className="h-16 border-b border-slate-100 flex items-center px-6 justify-between bg-gradient-to-r from-indigo-50 to-white">
+        <div className="h-16 border-b border-slate-100 flex items-center px-6 justify-between bg-gradient-to-r from-indigo-50 to-white shrink-0">
           <div className="flex items-center gap-2">
             <Sparkles className="w-5 h-5 text-indigo-600" />
             <span className="font-bold text-slate-800">AI 智能助教</span>
           </div>
         </div>
 
-        <div className="flex-1 overflow-y-auto p-4 space-y-4 bg-slate-50/30">
-          {/* AI Messages Area */}
-          <div className="space-y-4 mb-4">
-            {aiMessages.map((msg, idx) => (
-              <div key={idx} className={cn("flex gap-3", msg.role === 'user' ? "flex-row-reverse" : "")}>
-                <div className={cn(
-                  "w-8 h-8 rounded-full flex items-center justify-center shrink-0 shadow-sm",
-                  msg.role === 'ai' ? "bg-indigo-100 text-indigo-600" : "bg-slate-200 text-slate-600"
-                )}>
-                  {msg.role === 'ai' ? <Sparkles className="w-4 h-4" /> : <User className="w-4 h-4" />}
-                </div>
-                <div className={cn(
-                  "p-3 rounded-2xl max-w-[85%] text-sm shadow-sm",
-                  msg.role === 'ai' 
-                    ? "bg-white border border-slate-100 text-slate-700 rounded-tl-none" 
-                    : "bg-blue-600 text-white rounded-tr-none"
-                )}>
-                  {msg.content}
-                </div>
-              </div>
-            ))}
-            <div ref={chatEndRef} />
-          </div>
-
-          {/* Evaluation Result Card (Conditional) */}
-          {showEvaluation && (
-            <div className="bg-white rounded-xl border border-indigo-100 p-4 shadow-sm animate-in slide-in-from-right duration-500">
-              <h4 className="font-bold text-slate-800 mb-3 flex items-center gap-2">
-                <Award className="w-5 h-5 text-orange-500" />
-                AI 激励反馈
-              </h4>
-              
-              <div className="flex items-center justify-center mb-4">
-                 <div className="text-center">
-                    <div className="text-4xl font-bold text-orange-500 mb-1">🌟 超级棒</div>
-                    <p className="text-xs text-slate-500">战胜了 98% 的同学</p>
-                 </div>
-              </div>
-
-              <div className="grid grid-cols-3 gap-2 mb-4">
-                <div className="text-center p-2 bg-slate-50 rounded-lg">
-                  <div className="text-xs text-slate-500 mb-1">自信度</div>
-                  <div className="font-bold text-green-600">满分</div>
-                </div>
-                <div className="text-center p-2 bg-slate-50 rounded-lg">
-                  <div className="text-xs text-slate-500 mb-1">完整度</div>
-                  <div className="font-bold text-blue-600">100%</div>
-                </div>
-                <div className="text-center p-2 bg-slate-50 rounded-lg">
-                  <div className="text-xs text-slate-500 mb-1">情感</div>
-                  <div className="font-bold text-orange-600">激昂</div>
-                </div>
-              </div>
-              
-              <div className="text-sm text-slate-600 bg-yellow-50 p-3 rounded-lg border border-yellow-100 mb-3">
-                <p className="font-medium text-yellow-800 mb-1">� 进步空间</p>
-                声音还可以再大一点点哦，让全班同学都听到你的豪情壮志！
-              </div>
-
-              <div className="flex gap-2">
-                 <button className="flex-1 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700 transition-colors shadow-sm">
-                   颁发小奖状 🏅
-                 </button>
-                 <button className="flex-1 py-2 bg-indigo-50 text-indigo-600 rounded-lg text-sm font-medium hover:bg-indigo-100 transition-colors">
-                   再试一次
-                 </button>
-              </div>
-            </div>
-          )}
-
-          {/* Recommendations Card (Static for demo) */}
-          <div className="bg-gradient-to-br from-purple-50 to-white rounded-xl border border-purple-100 p-4 shadow-sm">
-            <h4 className="font-bold text-slate-800 mb-3 flex items-center gap-2 text-sm">
-              <Zap className="w-4 h-4 text-purple-500" />
+        {/* Fixed Resource Card at Top */}
+        <div className="p-5 bg-gradient-to-b from-white to-slate-50/50 border-b border-slate-100 shrink-0 z-20">
+          <div className="bg-white rounded-2xl border border-indigo-50 p-4 shadow-sm hover:shadow-lg hover:shadow-indigo-100/50 transition-all duration-300 cursor-pointer group relative overflow-hidden">
+            <div className="absolute top-0 right-0 w-16 h-16 bg-gradient-to-br from-indigo-50 to-purple-50 rounded-bl-full opacity-50 group-hover:scale-110 transition-transform"></div>
+            
+            <h4 className="font-bold text-slate-800 mb-3 flex items-center gap-2 text-xs uppercase tracking-wider text-indigo-600 relative z-10">
+              <span className="bg-indigo-100 p-1 rounded-md group-hover:bg-indigo-600 group-hover:text-white transition-colors duration-300">
+                <Zap className="w-3 h-3" />
+              </span>
               课堂拓展资源
             </h4>
-            <div className="space-y-2">
-              <div className="flex gap-2 items-center p-2 hover:bg-white rounded-lg transition-colors cursor-pointer border border-transparent hover:border-purple-100">
-                <div className="w-10 h-10 bg-slate-200 rounded overflow-hidden">
-                   <img src="/images/congjunxing.jpg" className="w-full h-full object-cover" />
-                </div>
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-medium text-slate-700 truncate">拓展视频：王昌龄生平动画</p>
-                  <p className="text-xs text-slate-400">时长 3:45 | 适合课后播放</p>
+            <div className="flex gap-3 items-center relative z-10">
+              <div className="w-20 h-14 bg-slate-200 rounded-lg overflow-hidden shrink-0 relative shadow-inner group-hover:ring-2 ring-indigo-100 transition-all">
+                 <img src="/images/congjunxing.jpg" className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-700" />
+                 <div className="absolute inset-0 bg-black/10 group-hover:bg-black/20 flex items-center justify-center transition-colors">
+                   <div className="w-6 h-6 bg-white/90 rounded-full flex items-center justify-center backdrop-blur-sm shadow-sm group-hover:scale-110 transition-transform">
+                     <Play className="w-3 h-3 text-indigo-600 fill-indigo-600 ml-0.5" />
+                   </div>
+                 </div>
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-bold text-slate-700 truncate group-hover:text-indigo-600 transition-colors">王昌龄生平动画</p>
+                <div className="flex items-center gap-2 mt-1">
+                  <span className="text-[10px] font-medium px-1.5 py-0.5 bg-slate-100 text-slate-500 rounded border border-slate-200">3:45</span>
+                  <span className="text-[10px] text-amber-500 flex items-center gap-0.5 font-medium">
+                    <Star className="w-2.5 h-2.5 fill-current" /> 必看
+                  </span>
                 </div>
               </div>
             </div>
           </div>
         </div>
 
-        {/* Input Area */}
-        <div className="p-4 bg-white border-t border-slate-100">
-          <div className="relative flex items-center">
-            <input
-              type="text"
-              value={inputMessage}
-              onChange={(e) => setInputMessage(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && handleSendMessage()}
-              placeholder="问问AI关于这首诗的问题..."
-              className="w-full pl-4 pr-12 py-3 bg-slate-50 border border-slate-200 rounded-full text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 shadow-inner"
-            />
-            <button 
-              onClick={handleSendMessage}
-              disabled={!inputMessage.trim()}
-              className="absolute right-1.5 top-1.5 p-1.5 bg-indigo-600 text-white rounded-full hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
-            >
-              <Send className="w-4 h-4" />
-            </button>
-          </div>
-          <div className="flex justify-center mt-2 gap-2">
-            {['教学重点', '难点解析', '生成随堂测验'].map(hint => (
-              <button 
-                key={hint}
-                onClick={() => setInputMessage(hint)}
-                className="text-xs px-2 py-1 bg-slate-100 text-slate-500 rounded-full hover:bg-slate-200 transition-colors"
-              >
-                {hint}
-              </button>
-            ))}
-          </div>
+        {/* Scrollable Area */}
+        <div className="flex-1 overflow-y-auto p-4 space-y-4 bg-slate-50/30">
+          
+          {/* Unified Companion & Feedback Card */}
+          {renderCombinedRightCard()}
+
         </div>
       </aside>
+
+      {showReportModal && <ReportModal />}
     </div>
   )
 }

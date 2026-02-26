@@ -1,16 +1,60 @@
-# React + Vite
+# 365 AI 速记 (365 AI Learning Demo)
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](https://github.com/your-username/365-ai-demo/pulls)
 
-Currently, two official plugins are available:
+这是一个基于 AI 的古诗文互动学习平台演示项目，旨在通过智能化、游戏化的方式提升学生的学习兴趣和效率。
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) (or [oxc](https://oxc.rs) when used in [rolldown-vite](https://vite.dev/guide/rolldown)) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+## 🌟 核心功能 (Key Features)
 
-## React Compiler
+### 1. 📚 沉浸式课程学习
+- **多模态教学**：结合视频教学、文字解析和背景知识介绍
+- **进度管理**：清晰的课程列表，标记"已完成"与"未解锁"状态，引导循序渐进的学习
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+### 2. 🤖 智能书童伴读 (AI Companion)
+- **IP 形象**：可爱的"小书童" SVG 动态形象，拥有不同情绪表情（开心、兴奋等）
+- **实时互动**：提供学习引导、鼓励和即时反馈
 
-## Expanding the ESLint configuration
+### 3. 🎤 智能背诵与评估 (Smart Recitation)
+- **多种模式**：
+  - **有图背诵**：图文联想，支持逐句提示（遮罩/显示）
+  - **无图挑战**：脱离辅助，测试真实记忆
+- **AI 评分系统**：
+  - 多维度评分：准确度、流畅度、情感
+  - **个性化点评**：根据背诵内容生成具体、生动的评语（非通用模板）
+  - **趣味称号**：获得"边塞小诗人"、"韵律大师"等成就称号
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
+### 4. 🎨 AI 创意绘图工坊 (Creative Workshop)
+- **解锁机制**：需完成课程学习后方可解锁创作权限
+- **三步创作流**：
+  1. **风格选择**：水墨国风、Q版动画、厚涂油画、像素艺术
+  2. **意象聚焦**：选择诗词中的核心元素（如"孤城"、"将军"）
+  3. **氛围定调**：设定画面色调（清冷、热血、孤寂）
+- **成果生成**：模拟 AI 绘图过程，生成独一无二的诗词配图并支持下载
+
+## 🛠️ 技术栈 (Tech Stack)
+
+- **Framework**: React 18
+- **Build Tool**: Vite
+- **Styling**: Tailwind CSS
+- **Icons**: Lucide React
+- **Animation**: Canvas Confetti, CSS Animations
+
+## 🚀 快速开始 (Getting Started)
+
+### 前置要求 (Prerequisites)
+- Node.js >= 16.0.0
+- npm 或 yarn
+### 安装步骤
+
+1. **克隆仓库**
+   git clone https://github.com/lizhe-0423/365-ai-demo.git
+   cd 365-ai-demo
+
+2. **安装依赖**
+   npm install
+
+3. **启动开发服务器**
+   npm run dev
+4. **构建生产版本**
+   npm run build
