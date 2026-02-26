@@ -10,6 +10,7 @@ import {
 import { clsx } from 'clsx'
 import { twMerge } from 'tailwind-merge'
 import confetti from 'canvas-confetti'
+import { chatWithDeepSeek } from './services/ai'
 
 function cn(...inputs) {
   return twMerge(clsx(inputs))
@@ -77,12 +78,70 @@ const COURSES = [
   }
 ]
 
+const ASSISTANT_PERSONAS = [
+  {
+    id: 'pageboy',
+    name: '小书童',
+    tag: '古风伴读',
+    icon: '📜',
+    systemPrompt: `你是一位中国古代的“智能小书童”，名叫“小书童”，负责辅助语文教学与背诵。
+说话可古风，但要清晰好懂；称呼对方为“老师”。
+回答尽量精炼，通常不超过100字。`
+  },
+  {
+    id: 'teacher',
+    name: '语文老师',
+    tag: '课堂讲解',
+    icon: '👩‍🏫',
+    systemPrompt: `你是一名小学语文老师，擅长用简单语言解释诗文与写作技巧。
+回答结构清晰：先结论，再一句话例子；称呼“老师”。
+回答尽量精炼，通常不超过120字。`
+  },
+  {
+    id: 'appreciator',
+    name: '诗词鉴赏家',
+    tag: '意境赏析',
+    icon: '🪶',
+    systemPrompt: `你是一位诗词鉴赏家，擅长讲意象、情绪与意境层次，但不堆砌术语。
+称呼“老师”，用1-2个关键词点题，再给简短解释。
+回答尽量精炼，通常不超过120字。`
+  },
+  {
+    id: 'coach',
+    name: '背诵教练',
+    tag: '背诵训练',
+    icon: '🎯',
+    systemPrompt: `你是一位背诵训练教练，擅长把诗文拆成节奏、停顿与记忆钩子。
+称呼“老师”，给出可执行的1-3步训练法。
+回答尽量精炼，通常不超过120字。`
+  },
+  {
+    id: 'examiner',
+    name: '小考官',
+    tag: '随堂出题',
+    icon: '📝',
+    systemPrompt: `你是一位严格但友善的小考官，擅长出选择题/填空题并给出一句解析。
+称呼“老师”，先给题目，再给答案与解析（尽量短）。
+回答尽量精炼，通常不超过140字。`
+  },
+  {
+    id: 'storyteller',
+    name: '故事讲解员',
+    tag: '情景带入',
+    icon: '🎬',
+    systemPrompt: `你是一位故事讲解员，擅长用画面感把诗文讲成一个短场景，帮助学生记忆。
+称呼“老师”，用2-4句短句描述场景即可。
+回答尽量精炼，通常不超过140字。`
+  }
+]
+
 export default function App() {
   const [activeCourse, setActiveCourse] = useState(COURSES[0])
   const [activeMode, setActiveMode] = useState('video') // video, recite, ai-draw
   const [reciteSubMode, setReciteSubMode] = useState('image') // image, no-image
+  const [assistantPersonaId, setAssistantPersonaId] = useState(ASSISTANT_PERSONAS[0].id)
   const [aiMessages, setAiMessages] = useState([
-    { role: 'ai', content: '王老师，您好！我是您的智能助教。本节课《静夜思》的教学重点已准备好。' }
+    { role: 'assistant', content: '王老师，您好！我是您的智能助教。本节课《静夜思》的教学重点已准备好。' }
   ])
   const [isRecording, setIsRecording] = useState(false)
   const [showEvaluation, setShowEvaluation] = useState(false)
@@ -105,10 +164,14 @@ export default function App() {
 
   const [isGeneratingImage, setIsGeneratingImage] = useState(false)
   const [showAiDrawing, setShowAiDrawing] = useState(false)
+  const [isAiLoading, setIsAiLoading] = useState(false)
+  const didInitPersonaRef = useRef(false)
 
   // Ref for scrolling chat to bottom
   const chatEndRef = useRef(null)
   const videoRef = useRef(null)
+
+  const activePersona = ASSISTANT_PERSONAS.find(p => p.id === assistantPersonaId) || ASSISTANT_PERSONAS[0]
 
   const handleTimeJump = (time) => {
     if (videoRef.current) {
@@ -119,16 +182,27 @@ export default function App() {
 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [aiMessages])
+  }, [aiMessages, isAiLoading])
 
   // Reset state when course changes
   useEffect(() => {
     setRevealedLines(0)
     setShowEvaluation(false)
     setAiMessages([
-      { role: 'ai', content: `王老师，正在为您准备《${activeCourse.title}》的教学资源...已就绪。建议先引导学生观看视频，再进行逐句朗读。` }
+      { role: 'assistant', content: `老师好，我是${activePersona.name}。已为您备好《${activeCourse.title}》教学资源，建议先看视频，再逐句朗读。` }
     ])
   }, [activeCourse])
+
+  useEffect(() => {
+    if (!didInitPersonaRef.current) {
+      didInitPersonaRef.current = true
+      return
+    }
+    setAiMessages(prev => [
+      ...prev,
+      { role: 'assistant', content: `身份已切换：${activePersona.icon}${activePersona.name}（${activePersona.tag}）` }
+    ])
+  }, [assistantPersonaId])
 
   // Reset workshop when tab changes
   useEffect(() => {
@@ -144,29 +218,29 @@ export default function App() {
     }
   }, [activeTab, showEvaluation, activeCourse.id])
 
-  const handleSendMessage = () => {
-    if (!inputMessage.trim()) return
+  const handleSendMessage = async () => {
+    if (!inputMessage.trim() || isAiLoading) return
     
     const newMessages = [...aiMessages, { role: 'user', content: inputMessage }]
     setAiMessages(newMessages)
     setInputMessage('')
+    setIsAiLoading(true)
     
-    // Simulate AI response
-    setTimeout(() => {
-      let response = '收到，正在为您生成教学辅助内容...'
-      if (inputMessage.includes('意思')) {
-        response = `【教学参考】\n${activeCourse.meaning}\n\n建议引导学生用自己的话复述一遍，体会“穿金甲”的艰辛。`
-      } else if (inputMessage.includes('背景')) {
-        response = `【背景知识】\n${activeCourse.background}\n\n知识点延伸：介绍盛唐边塞诗派，以及同时期的诗人高适、岑参。`
-      } else if (inputMessage.includes('背')) {
-        response = '【背诵指导】\n建议采用“情景带入法”：\n1. 想象青海湖边的雪山景象。\n2. 感受“不破楼兰终不还”的豪迈誓言。'
-      } else if (inputMessage.includes('难点')) {
-        response = '【本课难点】\n1. 边塞诗的意象理解（孤城、玉门关、楼兰）。\n2. 体会从“暗雪山”到“穿金甲”的画面转换。\n建议播放边塞风光的视频片段辅助教学。'
-      } else if (inputMessage.includes('测验')) {
-        response = '【随堂测验生成中...】\n1. “青海长云暗雪山”中“暗”字的作用是？\n2. “不破楼兰终不还”化用了哪个历史典故？\n（点击查看答案解析）'
+    try {
+      // Add context about the current course
+      const contextMessage = {
+        role: 'system',
+        content: `当前正在学习的课程是《${activeCourse.title}》，作者${activeCourse.author}。内容是：${activeCourse.content.join('，')}。含义：${activeCourse.meaning}。背景：${activeCourse.background}。`
       }
-      setAiMessages(prev => [...prev, { role: 'ai', content: response }])
-    }, 1000)
+      
+      const response = await chatWithDeepSeek([contextMessage, ...newMessages], { systemPrompt: activePersona.systemPrompt })
+      setAiMessages(prev => [...prev, { role: 'assistant', content: response }])
+    } catch (error) {
+      console.error('Failed to get AI response:', error)
+      setAiMessages(prev => [...prev, { role: 'assistant', content: '小书童今日有些疲乏，请稍后再试。' }])
+    } finally {
+      setIsAiLoading(false)
+    }
   }
 
   const [evaluationData, setEvaluationData] = useState({
@@ -225,7 +299,7 @@ export default function App() {
           colors: ['#FFD700', '#FF69B4', '#00BFFF']
         })
         setAiMessages(prev => [...prev, { 
-          role: 'ai', 
+          role: 'assistant', 
           content: `【书童伴读点评】\n${result.comment}\n恭喜获得“${result.title.name}”称号！` 
         }])
       }, 1500)
@@ -277,8 +351,36 @@ export default function App() {
     setWorkshopStep('config')
   }
 
-  const ScholarAvatar = ({ emotion = 'happy' }) => (
-    <div className="relative w-24 h-24">
+  const ScholarAvatar = ({ emotion = 'happy', onClick }) => {
+    const [internalEmotion, setInternalEmotion] = useState(emotion)
+    const [animationClass, setAnimationClass] = useState('')
+
+    useEffect(() => {
+      setInternalEmotion(emotion)
+    }, [emotion])
+
+    const handleClick = () => {
+      // Trigger animation
+      setAnimationClass('animate-bounce')
+      // Random emotion
+      const emotions = ['happy', 'excited', 'surprised']
+      const randomEmotion = emotions[Math.floor(Math.random() * emotions.length)]
+      setInternalEmotion(randomEmotion)
+      
+      // Reset after animation
+      setTimeout(() => {
+          setAnimationClass('')
+          setInternalEmotion(emotion)
+      }, 1000)
+      
+      if (onClick) onClick()
+    }
+
+    return (
+      <div 
+        className={cn("relative w-24 h-24 cursor-pointer transition-transform duration-300", animationClass)}
+        onClick={handleClick}
+      >
       <svg viewBox="0 0 100 100" className="w-full h-full drop-shadow-xl filter">
         <defs>
           <linearGradient id="skin" x1="0%" y1="0%" x2="0%" y2="100%">
@@ -323,10 +425,14 @@ export default function App() {
         <circle cx="70" cy="65" r="4" fill="#FFB6C1" opacity="0.6" />
 
         {/* Mouth */}
-        {emotion === 'happy' ? (
+        {internalEmotion === 'happy' && (
           <path d="M40,70 Q50,78 60,70" fill="none" stroke="#1A1A1A" strokeWidth="2" strokeLinecap="round" />
-        ) : (
-          <path d="M40,72 Q50,85 60,72" fill="#FF9999" stroke="#1A1A1A" strokeWidth="1" />
+        )}
+        {internalEmotion === 'excited' && (
+           <path d="M40,70 Q50,85 60,70" fill="#FF9999" stroke="#1A1A1A" strokeWidth="1" />
+        )}
+        {internalEmotion === 'surprised' && (
+           <circle cx="50" cy="75" r="5" fill="none" stroke="#1A1A1A" strokeWidth="2" />
         )}
       </svg>
       
@@ -335,7 +441,8 @@ export default function App() {
         <span className="text-lg">📜</span>
       </div>
     </div>
-  )
+    )
+  }
 
   const renderCombinedRightCard = () => (
     <div className="bg-white rounded-3xl overflow-hidden shadow-xl border border-indigo-50 transition-all duration-500 hover:shadow-2xl hover:scale-[1.01] group relative">
@@ -356,7 +463,7 @@ export default function App() {
         </div>
         
         <div className="text-center mt-2">
-          <h3 className="font-bold text-xl text-slate-800 tracking-tight">Hi, 我是小书童</h3>
+          <h3 className="font-bold text-xl text-slate-800 tracking-tight">Hi, 我是{activePersona.name}</h3>
           <div className="mt-2 inline-flex items-center gap-2 px-4 py-1.5 bg-indigo-50 border border-indigo-100 rounded-full shadow-sm">
             <span className="relative flex h-2.5 w-2.5">
               <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
@@ -365,6 +472,21 @@ export default function App() {
             <span className="text-xs font-bold text-indigo-600">
               {showEvaluation ? '正在为您喝彩！🎉' : '全神贯注伴读中...'}
             </span>
+          </div>
+
+          <div className="mt-3 flex justify-center">
+            <div className="inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-white/70 border border-white/40 shadow-sm backdrop-blur-md">
+              <span className="text-xs font-bold text-slate-600">身份</span>
+              <select
+                value={assistantPersonaId}
+                onChange={(e) => setAssistantPersonaId(e.target.value)}
+                className="text-xs font-bold text-indigo-700 bg-transparent outline-none"
+              >
+                {ASSISTANT_PERSONAS.map(p => (
+                  <option key={p.id} value={p.id}>{p.icon} {p.name} · {p.tag}</option>
+                ))}
+              </select>
+            </div>
           </div>
         </div>
       </div>
@@ -376,13 +498,39 @@ export default function App() {
              <div className="bg-gradient-to-br from-slate-50 to-white rounded-2xl p-5 border border-slate-100 shadow-[0_2px_8px_-2px_rgba(0,0,0,0.05)] mb-4 relative group/chat">
                 <div className="absolute -top-2 left-1/2 -translate-x-1/2 w-4 h-4 bg-slate-50 rotate-45 border-t border-l border-slate-100 group-hover/chat:bg-white transition-colors"></div>
                 <p className="text-sm text-slate-600 leading-relaxed text-center font-medium">
-                   {aiMessages[aiMessages.length - 1].content}
+                   {(aiMessages.slice().reverse().find(m => m.role === 'assistant')?.content) || ''}
                 </p>
              </div>
-             <div className="flex justify-center gap-2 text-xs text-slate-400 font-medium">
+             <div className="flex justify-center gap-2 text-xs text-slate-400 font-medium mb-4">
                 <span className="flex items-center gap-1"><Clock className="w-3 h-3" /> 实时响应</span>
                 <span>•</span>
                 <span className="flex items-center gap-1"><Sparkles className="w-3 h-3 text-yellow-400" /> 智能纠错</span>
+             </div>
+
+             <div className="relative group/input">
+               <div className="absolute -inset-0.5 bg-gradient-to-r from-indigo-500 to-purple-500 rounded-xl opacity-0 group-hover/input:opacity-20 transition duration-500 blur-sm"></div>
+               <div className="relative">
+                 <input
+                   type="text"
+                   value={inputMessage}
+                   onChange={(e) => setInputMessage(e.target.value)}
+                   onKeyPress={(e) => e.key === 'Enter' && handleSendMessage()}
+                    placeholder={isAiLoading ? `${activePersona.name}正在思考...` : `向${activePersona.name}提问...`}
+                   disabled={isAiLoading}
+                   className="w-full pl-4 pr-12 py-3.5 bg-white border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/10 focus:border-indigo-500 disabled:opacity-50 disabled:bg-slate-50 transition-all shadow-sm text-slate-700 placeholder:text-slate-400"
+                 />
+                 <button
+                   onClick={handleSendMessage}
+                   disabled={!inputMessage.trim() || isAiLoading}
+                   className="absolute right-2 top-1/2 -translate-y-1/2 p-2 bg-gradient-to-r from-indigo-600 to-purple-600 text-white rounded-lg hover:shadow-md hover:scale-105 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100 transition-all duration-200"
+                 >
+                   {isAiLoading ? (
+                     <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
+                   ) : (
+                     <Send className="w-4 h-4" />
+                   )}
+                 </button>
+               </div>
              </div>
           </div>
         ) : (
