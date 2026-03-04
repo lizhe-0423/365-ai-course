@@ -14,16 +14,23 @@ export default defineConfig(({ mode }) => {
     headers: deepseekKey ? { Authorization: `Bearer ${deepseekKey}` } : undefined,
   }
 
+  const reciteProxy = {
+    target: 'http://localhost:8787',
+    changeOrigin: true,
+  }
+
   return {
     plugins: [react(), tailwindcss()],
     server: {
       proxy: {
         '/api/deepseek': deepseekProxy,
+        '/api/recite': reciteProxy,
       },
     },
     preview: {
       proxy: {
         '/api/deepseek': deepseekProxy,
+        '/api/recite': reciteProxy,
       },
     },
   }
