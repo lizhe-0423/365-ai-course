@@ -1,43 +1,38 @@
-export async function evaluateRecite({ itemId, recognizedText, durationSec, quality }) {
-  const res = await fetch('/api/recite/evaluate', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      itemId,
-      recognizedText,
-      durationSec,
-      quality: quality || null
-    })
-  })
 
-  const data = await res.json().catch(() => null)
-  if (!res.ok || !data?.ok) {
-    const message = data?.error?.message || '评测服务暂时不可用'
-    throw new Error(message)
+// Mock Recite Service
+
+const MOCK_EVALUATION = {
+  ok: true,
+  ui: {
+    score: 95,
+    title: { name: '边塞小诗人', icon: '🏰' },
+    details: [
+      { label: '准确度', value: '100%', color: 'text-emerald-700', bg: 'bg-emerald-50', border: 'border-emerald-100' },
+      { label: '流畅度', value: 'S级', color: 'text-[var(--app-primary)]', bg: 'bg-[var(--app-primary-soft-bg)]', border: 'border-[var(--app-primary-soft-border)]' },
+      { label: '情感', value: '充沛', color: 'text-[var(--app-accent)]', bg: 'bg-[var(--app-accent-soft-bg)]', border: 'border-[var(--app-accent-soft-border)]' }
+    ]
+  },
+  feedback: {
+    comment: '读得非常棒！特别是“不破楼兰终不还”这一句，气势十足！',
+    improvement: '继续保持这份自信，你的声音很有感染力！'
+  },
+  asr: {
+    text: '青海长云暗雪山，孤城遥望玉门关。黄沙百战穿金甲，不破楼兰终不还。'
   }
-  return data
+};
+
+export async function evaluateRecite({ itemId, recognizedText, durationSec, quality }) {
+  // Simulate network delay
+  await new Promise(resolve => setTimeout(resolve, 800));
+  return MOCK_EVALUATION;
 }
 
 export async function evaluateReciteAudio({ itemId, audioBlob, durationSec, quality, recognizedText }) {
-  const fd = new FormData()
-  fd.append('itemId', String(itemId))
-  if (Number.isFinite(Number(durationSec))) fd.append('durationSec', String(durationSec))
-  if (quality) fd.append('quality', JSON.stringify(quality))
-  if (recognizedText) fd.append('recognizedText', String(recognizedText))
-  if (audioBlob) fd.append('audio', audioBlob, 'recite.webm')
-
-  const res = await fetch('/api/recite/evaluate', { method: 'POST', body: fd })
-  const data = await res.json().catch(() => null)
-  if (!res.ok || !data?.ok) {
-    const message = data?.error?.message || '评测服务暂时不可用'
-    throw new Error(message)
-  }
-  return data
+  // Simulate network delay
+  await new Promise(resolve => setTimeout(resolve, 1500));
+  return MOCK_EVALUATION;
 }
 
 export async function listReciteItems() {
-  const res = await fetch('/api/recite/items')
-  const data = await res.json().catch(() => null)
-  if (!res.ok || !data?.ok) throw new Error('获取内容列表失败')
-  return data.items || []
+  return [];
 }

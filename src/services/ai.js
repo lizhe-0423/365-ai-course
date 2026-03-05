@@ -1,54 +1,23 @@
 
-const API_URL = '/api/deepseek/chat/completions';
-
+// Mock AI Service
 export const chatWithDeepSeek = async (messages, options = {}) => {
-  try {
-    const systemPrompt = options?.systemPrompt
-      ? String(options.systemPrompt)
-      : `你是一个中国古代的“智能小书童”，你的名字叫“小书童”。
-            
-你的性格特点：
-1.  说话文绉绉的，喜欢用古诗文、成语，但也会用现代通俗语言解释。
-2.  非常谦虚有礼，称呼用户为“公子”或“小姐”（或者老师）。
-3.  你的职责是辅助教学，帮助学生理解古诗文、背诵和学习。
-4.  你可以提供古诗的背景、解释、背诵技巧，甚至出题考考学生。
-5.  当学生表现好时，你会毫不吝啬地夸奖（比如“才高八斗”、“学富五车”）。
-6.  当学生遇到困难时，你会耐心鼓励。
-            
-请保持回复简短精炼，适合在侧边栏对话框中显示（通常不超过100字）。`
+  // Simulate network delay
+  await new Promise(resolve => setTimeout(resolve, 600));
 
-    const response = await fetch(API_URL, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        model: 'deepseek-chat',
-        messages: [
-          {
-            role: 'system',
-            content: systemPrompt
-          },
-          ...messages
-        ],
-        stream: false,
-        temperature: 0.7
-      })
-    });
-
-    if (!response.ok) {
-      const text = await response.text().catch(() => '')
-      throw new Error(`API ${response.status} ${response.statusText || ''} ${text}`.trim())
-    }
-
-    const data = await response.json();
-    return data.choices[0].message.content;
-  } catch (error) {
-    console.error('DeepSeek API Error:', error);
-    if (import.meta.env.DEV) {
-      const msg = (error && typeof error === 'object' && 'message' in error) ? String(error.message) : '未知错误'
-      return `小书童连接失败：${msg}`.slice(0, 100)
-    }
-    return '小书童今日有些疲乏（网络连接似乎出了点问题），请稍后再试。';
+  const lastUserMessage = messages.filter(m => m.role === 'user').pop()?.content || '';
+  
+  // Simple keyword matching for demo purposes
+  if (lastUserMessage.includes('你好') || lastUserMessage.includes('是谁')) {
+    return '公子好，我是您的书童。今日我们要学习哪首诗呢？';
   }
+  
+  if (lastUserMessage.includes('背诵') || lastUserMessage.includes('怎么背')) {
+    return '背诵这首诗，建议先从理解意象入手。比如“青海长云”和“雪山”，闭上眼想象一下那苍茫的边塞景色，自然就记住了。';
+  }
+  
+  if (lastUserMessage.includes('意思') || lastUserMessage.includes('解释')) {
+    return '这句诗描绘了边塞的壮阔景色。青海湖上空的浓云遮暗了连绵的雪山，战士们驻守孤城，遥望着远方的玉门关。';
+  }
+
+  return '公子所言甚是。这首诗意境开阔，情感悲壮，确实值得细细品味。我们可以试着多读几遍，体会其中的豪情壮志。';
 };

@@ -379,106 +379,35 @@ export default function App() {
   }
 
   const startSpeechRecognition = () => {
+    // Mock Speech Recognition for Demo
     if (speechRecognitionRef.current) return
-    const Ctor = window.SpeechRecognition || window.webkitSpeechRecognition
-    if (!Ctor) return
-    const recognition = new Ctor()
-    recognition.lang = 'zh-CN'
-    recognition.interimResults = true
-    recognition.continuous = true
-    recognition.maxAlternatives = 1
-    recognition.onresult = (event) => {
-      let text = ''
-      for (let i = 0; i < event.results.length; i++) {
-        text += event.results[i][0]?.transcript || ''
-      }
-      setReciteText(text.trim())
-    }
-    recognition.onerror = () => {
-      try {
-        recognition.stop()
-      } catch {
-      }
-      speechRecognitionRef.current = null
-    }
-    recognition.onend = () => {
-      if (isRecording && speechRecognitionRef.current === recognition) {
-        try {
-          recognition.start()
-        } catch {
+    
+    // Simulate real-time text appearance
+    const mockText = "青海长云暗雪山，孤城遥望玉门关..."
+    let index = 0
+    speechRecognitionRef.current = setInterval(() => {
+        if (index < mockText.length) {
+            setReciteText(prev => prev + mockText[index])
+            index++
         }
-      }
-    }
-    speechRecognitionRef.current = recognition
-    try {
-      recognition.start()
-    } catch {
-    }
+    }, 200)
   }
 
   const stopSpeechRecognition = () => {
-    const recognition = speechRecognitionRef.current
-    speechRecognitionRef.current = null
-    if (!recognition) return
-    try {
-      recognition.onresult = null
-      recognition.onerror = null
-      recognition.onend = null
-      recognition.stop()
-    } catch {
+    if (speechRecognitionRef.current) {
+        clearInterval(speechRecognitionRef.current)
+        speechRecognitionRef.current = null
     }
   }
 
   const startAudioRecording = async () => {
-    if (!navigator?.mediaDevices?.getUserMedia || !window.MediaRecorder) return false
-    if (mediaRecorderRef.current) return true
-
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
-    mediaStreamRef.current = stream
-    mediaChunksRef.current = []
-
-    const preferredTypes = [
-      'audio/webm;codecs=opus',
-      'audio/webm',
-      'audio/ogg;codecs=opus',
-      'audio/ogg'
-    ]
-    const mimeType = preferredTypes.find((t) => window.MediaRecorder.isTypeSupported?.(t)) || ''
-    const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined)
-    recorder.ondataavailable = (e) => {
-      if (e?.data && e.data.size > 0) mediaChunksRef.current.push(e.data)
-    }
-    recorder.start(200)
-    mediaRecorderRef.current = recorder
+    // Mock Audio Recording for Demo
     return true
   }
 
   const stopAudioRecording = () => {
-    return new Promise((resolve) => {
-      const recorder = mediaRecorderRef.current
-      mediaRecorderRef.current = null
-      const stream = mediaStreamRef.current
-      mediaStreamRef.current = null
-
-      const finalize = () => {
-        try {
-          stream?.getTracks?.().forEach((t) => t.stop())
-        } catch {
-        }
-        const chunks = mediaChunksRef.current || []
-        mediaChunksRef.current = []
-        if (!chunks.length) return resolve(null)
-        resolve(new Blob(chunks, { type: chunks[0]?.type || 'audio/webm' }))
-      }
-
-      if (!recorder) return finalize()
-      try {
-        recorder.onstop = () => finalize()
-        recorder.stop()
-      } catch {
-        finalize()
-      }
-    })
+    // Mock Audio Recording Stop
+    return Promise.resolve(new Blob(['mock-audio'], { type: 'audio/webm' }))
   }
 
   const handleEvaluateByText = async () => {
