@@ -5,12 +5,13 @@ import {
   RefreshCw, Award, Volume2, User, Search,
   Zap, Star, ThumbsUp, Sparkles, Send,
   Users, Monitor, Settings, Clock, GraduationCap,
-  PenTool, Download, Palette, X
+  PenTool, Download, Palette, X, Eye, EyeOff
 } from 'lucide-react'
 import { clsx } from 'clsx'
 import { twMerge } from 'tailwind-merge'
 import confetti from 'canvas-confetti'
 import { chatWithDeepSeek } from './services/ai'
+import { evaluateRecite, evaluateReciteAudio } from './services/recite'
 
 function cn(...inputs) {
   return twMerge(clsx(inputs))
@@ -141,6 +142,16 @@ const THEMES = [
   { id: 'ink', label: '水墨' },
 ]
 
+const WORKSHOP_DAILY_LIMIT = 10
+
+function getLocalISODate() {
+  const d = new Date()
+  const y = d.getFullYear()
+  const m = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${y}-${m}-${day}`
+}
+
 export default function App() {
   const [activeCourse, setActiveCourse] = useState(COURSES[0])
   const [activeMode, setActiveMode] = useState('video') // video, recite, ai-draw
@@ -150,6 +161,8 @@ export default function App() {
     { role: 'assistant', content: '王老师，您好！我是您的智能助教。本节课《静夜思》的教学重点已准备好。' }
   ])
   const [isRecording, setIsRecording] = useState(false)
+  const [isEvaluating, setIsEvaluating] = useState(false)
+  const [reciteText, setReciteText] = useState('')
   const [showEvaluation, setShowEvaluation] = useState(false)
   const [inputMessage, setInputMessage] = useState('')
   const [revealedLines, setRevealedLines] = useState(0) // Control how many lines are revealed
@@ -160,30 +173,74 @@ export default function App() {
   const [workshopStep, setWorkshopStep] = useState('course-selection') // 'course-selection', 'config', 'generating', 'result'
   const [workshopConfig, setWorkshopConfig] = useState({
     courseId: null,
-    style: '',
-    theme: '',
-    tone: ''
+    template: '',
+    scope: '',
+    element: ''
   })
-  const [workshopQuestion, setWorkshopQuestion] = useState('style') // 'style' | 'theme' | 'tone'
+  const [workshopQuestion, setWorkshopQuestion] = useState('template') // 'template' | 'scope' | 'element'
+  const [showRecognizedText, setShowRecognizedText] = useState(false)
   const [themeId, setThemeId] = useState(() => {
-    try {
-      return localStorage.getItem('app-theme') || 'paper'
+      try {
+        return localStorage.getItem('app-theme') || 'paper'
     } catch {
       return 'paper'
     }
   })
-  
-  const [showReportModal, setShowReportModal] = useState(false)
-  const [reportType, setReportType] = useState('single') // single, class, weekly, monthly
+  const [isAssistantCollapsed, setIsAssistantCollapsed] = useState(false)
+  const [workshopQuota, setWorkshopQuota] = useState(() => {
+    const today = getLocalISODate()
+    try {
+      const raw = localStorage.getItem('workshop-quota')
+      const parsed = raw ? JSON.parse(raw) : null
+      if (parsed && parsed.date === today && typeof parsed.used === 'number') return parsed
+    } catch {
+    }
+    return { date: today, used: 0 }
+  })
+  const [savedDrawings, setSavedDrawings] = useState([])
 
+  const handleSaveDrawing = (course, imageUrl) => {
+    // In a real app, this would save to backend/DB
+    // Here we simulate saving to user's portfolio
+    const newDrawing = {
+      id: Date.now(),
+      courseTitle: course.title,
+      imageUrl,
+      date: getLocalISODate(),
+      style: workshopConfig.template === 'comic' ? '连环画' : '速记'
+    }
+    setSavedDrawings(prev => [newDrawing, ...prev])
+    
+    // Simulate download
+    const link = document.createElement('a')
+    link.href = imageUrl
+    link.download = `${course.title}-AI创作.jpg`
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+    
+    setAiMessages(prev => [
+        ...prev,
+        { role: 'assistant', content: `🎉 作品已保存！我也帮你把它收录进【学情档案】啦，快去看看吧！` }
+    ])
+  }
+  const [workshopQuotaNotice, setWorkshopQuotaNotice] = useState('')
+   
+   const [showReportModal, setShowReportModal] = useState(false)
+
+  const [reportType, setReportType] = useState('single') // single, class, weekly, monthly
   const [isGeneratingImage, setIsGeneratingImage] = useState(false)
-  const [showAiDrawing, setShowAiDrawing] = useState(false)
   const [isAiLoading, setIsAiLoading] = useState(false)
   const didInitPersonaRef = useRef(false)
 
   // Ref for scrolling chat to bottom
   const chatEndRef = useRef(null)
   const videoRef = useRef(null)
+  const speechRecognitionRef = useRef(null)
+  const reciteStartMsRef = useRef(0)
+  const mediaRecorderRef = useRef(null)
+  const mediaChunksRef = useRef([])
+  const mediaStreamRef = useRef(null)
 
   const activePersona = ASSISTANT_PERSONAS.find(p => p.id === assistantPersonaId) || ASSISTANT_PERSONAS[0]
 
@@ -194,6 +251,19 @@ export default function App() {
     } catch {
     }
   }, [themeId])
+
+  useEffect(() => {
+    if (activeTab !== 'workshop') return
+    const today = getLocalISODate()
+    if (workshopQuota.date === today) return
+    const next = { date: today, used: 0 }
+    setWorkshopQuota(next)
+    setWorkshopQuotaNotice('')
+    try {
+      localStorage.setItem('workshop-quota', JSON.stringify(next))
+    } catch {
+    }
+  }, [activeTab, workshopQuota.date])
 
   const handleTimeJump = (time) => {
     if (videoRef.current) {
@@ -232,12 +302,12 @@ export default function App() {
        // If coming from "Reward" button (showEvaluation is true), pre-select the current course
        if (showEvaluation) {
          setWorkshopStep('config')
-         setWorkshopConfig({ courseId: activeCourse.id, style: '', theme: '', tone: '' })
-         setWorkshopQuestion('style')
+         setWorkshopConfig({ courseId: activeCourse.id, template: '', scope: '', element: '' })
+         setWorkshopQuestion('template')
        } else {
          setWorkshopStep('course-selection')
-         setWorkshopConfig({ courseId: null, style: '', theme: '', tone: '' })
-         setWorkshopQuestion('style')
+         setWorkshopConfig({ courseId: null, template: '', scope: '', element: '' })
+         setWorkshopQuestion('template')
        }
     }
   }, [activeTab, showEvaluation, activeCourse.id])
@@ -308,28 +378,202 @@ export default function App() {
     }
   }
 
-  const handleRecordToggle = () => {
+  const startSpeechRecognition = () => {
+    if (speechRecognitionRef.current) return
+    const Ctor = window.SpeechRecognition || window.webkitSpeechRecognition
+    if (!Ctor) return
+    const recognition = new Ctor()
+    recognition.lang = 'zh-CN'
+    recognition.interimResults = true
+    recognition.continuous = true
+    recognition.maxAlternatives = 1
+    recognition.onresult = (event) => {
+      let text = ''
+      for (let i = 0; i < event.results.length; i++) {
+        text += event.results[i][0]?.transcript || ''
+      }
+      setReciteText(text.trim())
+    }
+    recognition.onerror = () => {
+      try {
+        recognition.stop()
+      } catch {
+      }
+      speechRecognitionRef.current = null
+    }
+    recognition.onend = () => {
+      if (isRecording && speechRecognitionRef.current === recognition) {
+        try {
+          recognition.start()
+        } catch {
+        }
+      }
+    }
+    speechRecognitionRef.current = recognition
+    try {
+      recognition.start()
+    } catch {
+    }
+  }
+
+  const stopSpeechRecognition = () => {
+    const recognition = speechRecognitionRef.current
+    speechRecognitionRef.current = null
+    if (!recognition) return
+    try {
+      recognition.onresult = null
+      recognition.onerror = null
+      recognition.onend = null
+      recognition.stop()
+    } catch {
+    }
+  }
+
+  const startAudioRecording = async () => {
+    if (!navigator?.mediaDevices?.getUserMedia || !window.MediaRecorder) return false
+    if (mediaRecorderRef.current) return true
+
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+    mediaStreamRef.current = stream
+    mediaChunksRef.current = []
+
+    const preferredTypes = [
+      'audio/webm;codecs=opus',
+      'audio/webm',
+      'audio/ogg;codecs=opus',
+      'audio/ogg'
+    ]
+    const mimeType = preferredTypes.find((t) => window.MediaRecorder.isTypeSupported?.(t)) || ''
+    const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined)
+    recorder.ondataavailable = (e) => {
+      if (e?.data && e.data.size > 0) mediaChunksRef.current.push(e.data)
+    }
+    recorder.start(200)
+    mediaRecorderRef.current = recorder
+    return true
+  }
+
+  const stopAudioRecording = () => {
+    return new Promise((resolve) => {
+      const recorder = mediaRecorderRef.current
+      mediaRecorderRef.current = null
+      const stream = mediaStreamRef.current
+      mediaStreamRef.current = null
+
+      const finalize = () => {
+        try {
+          stream?.getTracks?.().forEach((t) => t.stop())
+        } catch {
+        }
+        const chunks = mediaChunksRef.current || []
+        mediaChunksRef.current = []
+        if (!chunks.length) return resolve(null)
+        resolve(new Blob(chunks, { type: chunks[0]?.type || 'audio/webm' }))
+      }
+
+      if (!recorder) return finalize()
+      try {
+        recorder.onstop = () => finalize()
+        recorder.stop()
+      } catch {
+        finalize()
+      }
+    })
+  }
+
+  const handleEvaluateByText = async () => {
+    if (isEvaluating) return
+    if (!reciteText.trim()) return
+    const durationSec = Math.max(0.5, (Date.now() - reciteStartMsRef.current) / 1000)
+    setIsEvaluating(true)
+    try {
+      const result = await evaluateRecite({
+        itemId: activeCourse.id,
+        recognizedText: reciteText,
+        durationSec
+      })
+      const ui = result.ui || {}
+      setEvaluationData({
+        ...ui,
+        improvement: result.feedback?.improvement || ''
+      })
+      setShowEvaluation(true)
+      setReciteText(result.asr?.text || reciteText)
+      setAiMessages(prev => [
+        ...prev,
+        {
+          role: 'assistant',
+          content: `【背诵评测（文本）】\n${result.feedback?.comment || ''}\n恭喜获得“${ui.title?.name || '小冠军'}”称号！`
+        }
+      ])
+    } catch (error) {
+      setAiMessages(prev => [
+        ...prev,
+        { role: 'assistant', content: `评测失败：${error?.message || '请稍后重试'}` }
+      ])
+      setShowEvaluation(false)
+    } finally {
+      setIsEvaluating(false)
+    }
+  }
+
+  const handleRecordToggle = async () => {
+    if (isEvaluating) return
     if (isRecording) {
       setIsRecording(false)
-      // Simulate evaluation after recording
-      setTimeout(() => {
-        const result = generateEvaluation(activeCourse)
-        setEvaluationData(result)
+      stopSpeechRecognition()
+      const durationSec = Math.max(0.5, (Date.now() - reciteStartMsRef.current) / 1000)
+      setIsEvaluating(true)
+      try {
+        const audioBlob = await stopAudioRecording()
+        const result = audioBlob
+          ? await evaluateReciteAudio({ itemId: activeCourse.id, audioBlob, durationSec, recognizedText: reciteText })
+          : await evaluateRecite({ itemId: activeCourse.id, recognizedText: reciteText, durationSec })
+        const ui = result.ui || {}
+        setEvaluationData({
+          ...ui,
+          improvement: result.feedback?.improvement || ''
+        })
         setShowEvaluation(true)
+        setReciteText(result.asr?.text || reciteText)
         confetti({
           particleCount: 150,
           spread: 80,
           origin: { y: 0.6 },
           colors: ['#FFD700', '#FF69B4', '#00BFFF']
         })
-        setAiMessages(prev => [...prev, { 
-          role: 'assistant', 
-          content: `【书童伴读点评】\n${result.comment}\n恭喜获得“${result.title.name}”称号！` 
-        }])
-      }, 1500)
+        setAiMessages(prev => [
+          ...prev,
+          {
+            role: 'assistant',
+            content: `【背诵评测】\n${result.feedback?.comment || ''}\n恭喜获得“${ui.title?.name || '小冠军'}”称号！`
+          }
+        ])
+      } catch (error) {
+        setAiMessages(prev => [
+          ...prev,
+          { role: 'assistant', content: `评测没连上服务：${error?.message || '请稍后重试'}` }
+        ])
+        setShowEvaluation(false)
+      } finally {
+        setIsEvaluating(false)
+      }
     } else {
+      reciteStartMsRef.current = Date.now()
+      setReciteText('')
       setIsRecording(true)
       setShowEvaluation(false)
+      try {
+        await startAudioRecording()
+      } catch (e) {
+        setAiMessages(prev => [
+          ...prev,
+          { role: 'assistant', content: `麦克风权限获取失败：${e?.message || '请允许麦克风权限'}` }
+        ])
+        setIsRecording(false)
+        return
+      }
+      startSpeechRecognition()
     }
   }
 
@@ -345,7 +589,26 @@ export default function App() {
   }
 
   const handleGenerateImage = () => {
-    if (!workshopConfig.style || !workshopConfig.theme || !workshopConfig.tone) return
+    if (!workshopConfig.template || !workshopConfig.scope) return
+    if (workshopConfig.scope === 'single' && !workshopConfig.element) return
+
+    const today = getLocalISODate()
+    const usedToday = workshopQuota.date === today ? workshopQuota.used : 0
+    const remaining = WORKSHOP_DAILY_LIMIT - usedToday
+    if (remaining <= 0) {
+      setWorkshopQuotaNotice('今日创作次数已用完')
+      return
+    }
+    setWorkshopQuotaNotice('')
+    setWorkshopQuota(prev => {
+      const base = prev.date === today ? prev : { date: today, used: 0 }
+      const next = { date: today, used: Math.min(WORKSHOP_DAILY_LIMIT, base.used + 1) }
+      try {
+        localStorage.setItem('workshop-quota', JSON.stringify(next))
+      } catch {
+      }
+      return next
+    })
     setIsGeneratingImage(true)
     setWorkshopStep('generating')
     
@@ -370,11 +633,11 @@ export default function App() {
     if (!course.completed) return
     setWorkshopConfig({
         courseId: course.id,
-        style: '',
-        theme: '',
-        tone: ''
+        template: '',
+        scope: '',
+        element: ''
     })
-    setWorkshopQuestion('style')
+    setWorkshopQuestion('template')
     setWorkshopStep('config')
   }
 
@@ -564,24 +827,22 @@ export default function App() {
           <div className="animate-in zoom-in duration-500 space-y-5">
             <div className="text-center">
                <div className="text-4xl font-black text-transparent bg-clip-text bg-gradient-to-r from-orange-400 to-red-500 mb-1 drop-shadow-sm">
-                 🌟 超级棒
+                 {(evaluationData.title?.icon || '🌟')}{' '}{(evaluationData.title?.name || '超级棒')}
                </div>
-               <p className="text-xs text-slate-400 font-medium">战胜了 98% 的同学</p>
+               <p className="text-xs text-slate-400 font-medium">本次得分 {evaluationData.score || 0} 分</p>
             </div>
 
             <div className="grid grid-cols-3 gap-3">
-               <div className="bg-white p-3 rounded-2xl text-center border border-green-100 shadow-sm hover:shadow-md transition-shadow group/stat">
-                 <div className="text-[10px] text-green-600 font-bold uppercase tracking-wider mb-1 group-hover/stat:text-green-700 transition-colors">准确度</div>
-                 <div className="text-xl font-black text-slate-800 group-hover/stat:text-green-700 transition-colors">100%</div>
-               </div>
-               <div className="bg-white p-3 rounded-2xl text-center border border-[var(--app-primary-soft-border)] shadow-sm hover:shadow-md transition-shadow group/stat">
-                 <div className="text-[10px] text-[var(--app-primary)] font-bold uppercase tracking-wider mb-1 group-hover/stat:opacity-90 transition-opacity">完整度</div>
-                 <div className="text-xl font-black text-slate-800 group-hover/stat:text-[var(--app-primary)] transition-colors">S级</div>
-               </div>
-               <div className="bg-white p-3 rounded-2xl text-center border border-[var(--app-accent-soft-border)] shadow-sm hover:shadow-md transition-shadow group/stat">
-                 <div className="text-[10px] text-[var(--app-accent)] font-bold uppercase tracking-wider mb-1 group-hover/stat:opacity-90 transition-opacity">情感</div>
-                 <div className="text-xl font-black text-slate-800 group-hover/stat:text-[var(--app-accent)] transition-colors">充沛</div>
-               </div>
+               {(evaluationData.details?.length ? evaluationData.details.slice(0, 3) : [
+                 { label: '准确度', value: '—', color: 'text-slate-700', border: 'border-slate-200' },
+                 { label: '完整度', value: '—', color: 'text-slate-700', border: 'border-slate-200' },
+                 { label: '语速', value: '—', color: 'text-slate-700', border: 'border-slate-200' },
+               ]).map((d, idx) => (
+                 <div key={idx} className={cn("bg-white p-3 rounded-2xl text-center border shadow-sm hover:shadow-md transition-shadow group/stat", d.border)}>
+                   <div className={cn("text-[10px] font-bold uppercase tracking-wider mb-1 group-hover/stat:opacity-90 transition-opacity", d.color)}>{d.label}</div>
+                   <div className={cn("text-xl font-black transition-colors", d.color)}>{d.value}</div>
+                 </div>
+               ))}
             </div>
 
             <div className="bg-amber-50 p-4 rounded-2xl border border-amber-100 text-xs text-amber-800 flex gap-3 items-start relative overflow-hidden">
@@ -591,7 +852,7 @@ export default function App() {
                <div className="bg-amber-100 p-1.5 rounded-full shrink-0 text-amber-600">
                   <Zap className="w-4 h-4" />
                </div>
-               <p className="leading-relaxed font-medium relative z-10">声音还可以再大一点点哦，让全班同学都听到你的豪情壮志！</p>
+               <p className="leading-relaxed font-medium relative z-10">{evaluationData.improvement || evaluationData.comment || '继续保持，下一次更棒～'}</p>
             </div>
 
             <div className="pt-2 space-y-3">
@@ -618,11 +879,12 @@ export default function App() {
     </div>
   )
 
-  const RecordingButton = ({ isRecording, onClick, label = '开始背诵监测' }) => (
+  const RecordingButton = ({ isRecording, onClick, label = '开始背诵监测', disabled = false }) => (
     <button 
       onClick={onClick}
+      disabled={disabled}
       className={cn(
-        "flex items-center gap-3 px-8 py-4 rounded-full font-bold text-lg shadow-xl transition-all transform hover:scale-105 active:scale-95",
+        "flex items-center gap-3 px-8 py-4 rounded-full font-bold text-lg shadow-xl transition-all transform hover:scale-105 active:scale-95 disabled:opacity-60 disabled:cursor-not-allowed disabled:hover:scale-100 disabled:active:scale-100",
         isRecording 
           ? "bg-red-500 text-white ring-4 ring-red-200 animate-pulse" 
           : "bg-[var(--app-primary)] text-[var(--app-primary-contrast)] ring-4 ring-[var(--app-primary-soft-border)]"
@@ -640,7 +902,7 @@ export default function App() {
       ) : (
         <>
           <Mic className="w-6 h-6" />
-          <span>{label}</span>
+          <span>{disabled ? '正在生成...' : label}</span>
         </>
       )}
     </button>
@@ -690,21 +952,48 @@ export default function App() {
                 </div>
                 
                 <div className="grid grid-cols-3 gap-4 mt-6">
-                  <div className="bg-white p-3 rounded-lg shadow-sm">
-                    <div className="text-xs text-slate-400">准确率</div>
-                    <div className="text-xl font-bold text-emerald-700">100%</div>
+                    <div className="bg-white p-3 rounded-lg shadow-sm">
+                      <div className="text-xs text-slate-400">准确率</div>
+                      <div className="text-xl font-bold text-emerald-700">100%</div>
+                    </div>
+                    <div className="bg-white p-3 rounded-lg shadow-sm">
+                      <div className="text-xs text-slate-400">流畅度</div>
+                      <div className="text-xl font-bold text-slate-900">S级</div>
+                    </div>
+                    <div className="bg-white p-3 rounded-lg shadow-sm">
+                      <div className="text-xs text-slate-400">情感</div>
+                      <div className="text-xl font-bold text-amber-800">充沛</div>
+                    </div>
                   </div>
-                  <div className="bg-white p-3 rounded-lg shadow-sm">
-                    <div className="text-xs text-slate-400">流畅度</div>
-                    <div className="text-xl font-bold text-slate-900">S级</div>
-                  </div>
-                  <div className="bg-white p-3 rounded-lg shadow-sm">
-                    <div className="text-xs text-slate-400">情感</div>
-                    <div className="text-xl font-bold text-amber-800">充沛</div>
-                  </div>
+
+                  {savedDrawings.length > 0 && (
+                    <div className="mt-6 w-full">
+                      <h5 className="text-left text-sm font-bold text-slate-700 mb-3 flex items-center gap-2">
+                        <Palette className="w-4 h-4 text-[var(--app-primary)]" />
+                        AI 创意作品集
+                      </h5>
+                      <div className="flex gap-3 overflow-x-auto pb-2">
+                        {savedDrawings.map((drawing, idx) => (
+                          <div key={drawing.id} className="relative group shrink-0 w-32">
+                            <div className="aspect-square rounded-lg overflow-hidden border border-slate-200 shadow-sm">
+                              <img src={drawing.imageUrl} className="w-full h-full object-cover" alt="作品" />
+                            </div>
+                            <div className="mt-1.5">
+                              <div className="text-[10px] font-bold text-slate-700 truncate">{drawing.courseTitle}</div>
+                              <div className="text-[10px] text-slate-400">{drawing.style} · {drawing.date}</div>
+                            </div>
+                            {idx === 0 && (
+                              <div className="absolute top-1 right-1 bg-red-500 text-white text-[8px] font-bold px-1.5 py-0.5 rounded shadow-sm animate-pulse">
+                                NEW
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </div>
-              </div>
-            )}
+              )}
             
             {reportType !== 'single' && (
               <div className="text-center text-slate-400">
@@ -733,6 +1022,9 @@ export default function App() {
   const renderContent = () => {
     if (activeTab === 'workshop') {
       const selectedCourse = COURSES.find(c => c.id === workshopConfig.courseId) || activeCourse
+      const today = getLocalISODate()
+      const usedToday = workshopQuota.date === today ? workshopQuota.used : 0
+      const workshopRemaining = Math.max(0, WORKSHOP_DAILY_LIMIT - usedToday)
       const workshopSteps = [
         { id: 'course-selection', label: '选课程' },
         { id: 'config', label: '配画面' },
@@ -751,6 +1043,13 @@ export default function App() {
 
           <div className="flex-1 overflow-y-auto p-6 lg:p-10 relative z-10">
             <div className="max-w-5xl mx-auto w-full">
+              <div className="sticky top-4 z-20 w-fit">
+                <div className="inline-flex items-center gap-2 px-3 py-2 rounded-2xl bg-white/80 border border-white/60 shadow-sm backdrop-blur-md">
+                  <span className={cn("w-2 h-2 rounded-full", workshopRemaining > 0 ? "bg-emerald-500" : "bg-rose-500")}></span>
+                  <span className="text-xs font-black text-[var(--app-text)]">今日创作 {workshopRemaining}/{WORKSHOP_DAILY_LIMIT}</span>
+                  {workshopQuotaNotice && <span className="text-xs font-bold text-rose-600">{workshopQuotaNotice}</span>}
+                </div>
+              </div>
               <div className="text-center">
                 <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-white/70 border border-white/50 shadow-sm backdrop-blur-md">
                   <span className="w-2 h-2 rounded-full bg-green-500"></span>
@@ -891,61 +1190,65 @@ export default function App() {
                          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
                            <div>
                              <div className="text-sm font-black text-slate-900">创作设置</div>
-                             <div className="text-xs text-slate-500 mt-1">选满三项即可生成，支持随时修改</div>
+                             <div className="text-xs text-slate-500 mt-1">选满即可生成，支持随时修改</div>
                            </div>
                            <div className="flex flex-wrap gap-2">
-                             <span className={cn("px-2.5 py-1 rounded-full text-xs font-bold border", workshopConfig.style ? "bg-slate-900 text-white border-slate-900" : "bg-slate-100 text-slate-500 border-slate-200")}>风格</span>
-                             <span className={cn("px-2.5 py-1 rounded-full text-xs font-bold border", workshopConfig.theme ? "bg-emerald-100 text-emerald-800 border-emerald-200" : "bg-slate-100 text-slate-500 border-slate-200")}>主题</span>
-                             <span className={cn("px-2.5 py-1 rounded-full text-xs font-bold border", workshopConfig.tone ? "bg-amber-100 text-amber-700 border-amber-200" : "bg-slate-100 text-slate-500 border-slate-200")}>氛围</span>
+                             <span className={cn("px-2.5 py-1 rounded-full text-xs font-bold border", workshopConfig.template ? "bg-slate-900 text-white border-slate-900" : "bg-slate-100 text-slate-500 border-slate-200")}>模版</span>
+                             <span className={cn("px-2.5 py-1 rounded-full text-xs font-bold border", workshopConfig.scope ? "bg-emerald-100 text-emerald-800 border-emerald-200" : "bg-slate-100 text-slate-500 border-slate-200")}>范围</span>
+                             {workshopConfig.scope === 'single' && (
+                               <span className={cn("px-2.5 py-1 rounded-full text-xs font-bold border", workshopConfig.element ? "bg-amber-100 text-amber-700 border-amber-200" : "bg-slate-100 text-slate-500 border-slate-200")}>元素</span>
+                             )}
                            </div>
                          </div>
                        </div>
 
                       <div className="p-6 flex-1 flex flex-col">
                         <div className="flex items-center justify-between mb-6">
-                          <div className="text-xs font-bold text-slate-500">第 {({ style: 1, theme: 2, tone: 3 }[workshopQuestion])} / 3 题</div>
-                          <div className="text-xs font-bold text-slate-500">{({ style: '先选风格', theme: '再选主角', tone: '最后定氛围' }[workshopQuestion])}</div>
+                          <div className="text-xs font-bold text-slate-500">
+                            {workshopQuestion === 'template' ? '第 1 题' : workshopQuestion === 'scope' ? '第 2 题' : '第 3 题'}
+                          </div>
+                          <div className="text-xs font-bold text-slate-500">
+                            {workshopQuestion === 'template' ? '先选模版' : workshopQuestion === 'scope' ? '再定范围' : '最后选元素'}
+                          </div>
                         </div>
 
                         <div className="flex-1">
-                          {workshopQuestion === 'style' && (
+                          {workshopQuestion === 'template' && (
                             <div className="space-y-4 animate-in fade-in slide-in-from-right-4 duration-300">
                               <div className="flex items-start justify-between gap-4">
                                 <label className="flex items-center gap-3 text-lg font-black text-slate-900">
                                   <div className="w-8 h-8 bg-slate-900 text-white rounded-xl flex items-center justify-center text-sm font-black shadow-md shadow-slate-200">1</div>
-                                  请选择绘画风格
+                                  请选择创作模版
                                 </label>
-                                <div className="text-xs text-slate-500 mt-2">决定整体笔触与质感</div>
+                                <div className="text-xs text-slate-500 mt-2">决定作品的基础风格</div>
                               </div>
                               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                                 {[
-                                  { id: 'ink', label: '水墨国风', icon: '🖌️', desc: '传统韵味，意境深远', grad: 'from-stone-100 via-amber-50 to-white' },
-                                  { id: 'anime', label: 'Q版动画', icon: '🎨', desc: '可爱活泼，色彩鲜明', grad: 'from-rose-50 via-amber-50 to-white' },
-                                  { id: 'oil', label: '厚涂油画', icon: '🖼️', desc: '质感厚重，光影丰富', grad: 'from-amber-50 via-orange-50 to-white' },
-                                  { id: 'pixel', label: '像素艺术', icon: '👾', desc: '复古怀旧，趣味十足', grad: 'from-slate-100 via-stone-50 to-white' },
-                                ].map(style => (
+                                  { id: 'comic', label: '连环画风格', icon: '📖', desc: '生动有趣，故事感强', grad: 'from-stone-100 via-amber-50 to-white' },
+                                  { id: 'sketch', label: '速记风格', icon: '✏️', desc: '简约线条，重点突出', grad: 'from-slate-100 via-stone-50 to-white' },
+                                ].map(item => (
                                   <button
-                                    key={style.id}
-                                    onClick={() => { updateWorkshopConfig('style', style.id); setWorkshopQuestion('theme') }}
+                                    key={item.id}
+                                    onClick={() => { updateWorkshopConfig('template', item.id); setWorkshopQuestion('scope') }}
                                     className={cn(
                                       "relative p-4 rounded-2xl border-2 text-left transition-all duration-300 group overflow-hidden",
-                                      workshopConfig.style === style.id 
+                                      workshopConfig.template === item.id 
                                         ? "border-slate-900 bg-white shadow-md ring-2 ring-slate-200 ring-offset-2" 
                                         : "border-white/60 bg-white/60 hover:border-slate-200 hover:shadow-md"
                                     )}
                                   >
-                                    <div className={cn("absolute inset-0 opacity-70 bg-gradient-to-br", style.grad)}></div>
+                                    <div className={cn("absolute inset-0 opacity-70 bg-gradient-to-br", item.grad)}></div>
                                     <div className="relative z-10">
                                       <div className="flex items-center justify-between">
-                                        <div className="text-3xl mb-2 group-hover:scale-110 transition-transform origin-left">{style.icon}</div>
-                                        {workshopConfig.style === style.id && (
+                                        <div className="text-3xl mb-2 group-hover:scale-110 transition-transform origin-left">{item.icon}</div>
+                                        {workshopConfig.template === item.id && (
                                           <div className="w-6 h-6 bg-slate-900 rounded-full flex items-center justify-center shadow-sm">
                                             <CheckCircle className="w-4 h-4 text-white" />
                                           </div>
                                         )}
                                       </div>
-                                      <div className={cn("font-black text-lg mb-1", workshopConfig.style === style.id ? "text-slate-900" : "text-slate-900")}>{style.label}</div>
-                                      <div className="text-xs text-slate-500 font-medium">{style.desc}</div>
+                                      <div className="font-black text-lg mb-1 text-slate-900">{item.label}</div>
+                                      <div className="text-xs text-slate-500 font-medium">{item.desc}</div>
                                     </div>
                                   </button>
                                 ))}
@@ -953,65 +1256,68 @@ export default function App() {
                             </div>
                           )}
 
-                          {workshopQuestion === 'theme' && (
+                          {workshopQuestion === 'scope' && (
                             <div className="space-y-4 animate-in fade-in slide-in-from-right-4 duration-300">
                               <div className="flex items-start justify-between gap-4">
                                 <label className="flex items-center gap-3 text-lg font-black text-slate-900">
                                   <div className="w-8 h-8 bg-slate-900 text-white rounded-xl flex items-center justify-center text-sm font-black shadow-md shadow-slate-200">2</div>
-                                  你想突出哪个主角？
+                                  请选择生成范围
                                 </label>
-                                <div className="text-xs text-slate-500 mt-2">决定画面的叙事焦点</div>
+                                <div className="text-xs text-slate-500 mt-2">决定画面的内容覆盖面</div>
                               </div>
                               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                                {['孤城与远山', '身披金甲的将军', '漫天黄沙与战场', '月下楼兰'].map(theme => (
+                                {[
+                                  { id: 'full', label: '生成全文', desc: '包含诗词完整意境' },
+                                  { id: 'single', label: '单一主题句', desc: '聚焦某一句的核心画面' }
+                                ].map(item => (
                                   <button
-                                    key={theme}
-                                    onClick={() => { updateWorkshopConfig('theme', theme); setWorkshopQuestion('tone') }}
+                                    key={item.id}
+                                    onClick={() => { 
+                                      updateWorkshopConfig('scope', item.id); 
+                                      if (item.id === 'single') setWorkshopQuestion('element');
+                                      // If full, stay here or ready to generate (handled by next button)
+                                    }}
                                     className={cn(
-                                      "px-5 py-4 rounded-2xl border-2 text-left transition-all font-bold flex items-center justify-between group",
-                                      workshopConfig.theme === theme 
+                                      "px-5 py-4 rounded-2xl border-2 text-left transition-all font-bold flex flex-col justify-center group",
+                                      workshopConfig.scope === item.id 
                                         ? "border-emerald-600 bg-white shadow-sm ring-2 ring-emerald-100 ring-offset-2 text-emerald-900" 
                                         : "border-white/60 bg-white/60 text-slate-700 hover:border-emerald-200 hover:bg-white"
                                     )}
                                   >
-                                    <span className="truncate">{theme}</span>
-                                    {workshopConfig.theme === theme && <CheckCircle className="w-5 h-5 text-emerald-600" />}
+                                    <div className="flex items-center justify-between w-full">
+                                      <span className="truncate text-lg">{item.label}</span>
+                                      {workshopConfig.scope === item.id && <CheckCircle className="w-5 h-5 text-emerald-600" />}
+                                    </div>
+                                    <span className="text-xs font-normal opacity-70 mt-1">{item.desc}</span>
                                   </button>
                                 ))}
                               </div>
                             </div>
                           )}
 
-                          {workshopQuestion === 'tone' && (
+                          {workshopQuestion === 'element' && (
                             <div className="space-y-4 animate-in fade-in slide-in-from-right-4 duration-300">
                               <div className="flex items-start justify-between gap-4">
                                 <label className="flex items-center gap-3 text-lg font-black text-slate-900">
                                   <div className="w-8 h-8 bg-slate-900 text-white rounded-xl flex items-center justify-center text-sm font-black shadow-md shadow-slate-200">3</div>
-                                  选择画面氛围色调
+                                  选择手动的元素
                                 </label>
-                                <div className="text-xs text-slate-500 mt-2">决定明暗与情绪</div>
+                                <div className="text-xs text-slate-500 mt-2">你想突出哪个主角？</div>
                               </div>
-                              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                                {[
-                                  { id: 'cold', label: '清冷肃杀', color: 'from-slate-200 to-slate-300', dot: 'bg-slate-400' },
-                                  { id: 'warm', label: '热血激昂', color: 'from-orange-100 to-red-100', dot: 'bg-rose-400' },
-                                  { id: 'lonely', label: '苍凉孤寂', color: 'from-amber-100 to-yellow-100', dot: 'bg-amber-400' },
-                                ].map(tone => (
+                              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                {['孤城与远山', '身披金甲的将军', '漫天黄沙与战场', '月下楼兰'].map(elem => (
                                   <button
-                                    key={tone.id}
-                                    onClick={() => updateWorkshopConfig('tone', tone.id)}
+                                    key={elem}
+                                    onClick={() => updateWorkshopConfig('element', elem)}
                                     className={cn(
-                                      "p-4 rounded-2xl border-2 text-center transition-all group",
-                                      workshopConfig.tone === tone.id 
-                                        ? "border-amber-500 bg-white shadow-md ring-2 ring-amber-100 ring-offset-2" 
-                                        : "border-white/60 bg-white/60 hover:border-amber-200 hover:bg-white hover:shadow-md"
+                                      "px-5 py-4 rounded-2xl border-2 text-left transition-all font-bold flex items-center justify-between group",
+                                      workshopConfig.element === elem 
+                                        ? "border-amber-500 bg-white shadow-sm ring-2 ring-amber-100 ring-offset-2 text-amber-900" 
+                                        : "border-white/60 bg-white/60 text-slate-700 hover:border-amber-200 hover:bg-white"
                                     )}
                                   >
-                                    <div className={cn("w-full h-12 rounded-xl mb-3 bg-gradient-to-br shadow-inner", tone.color)}></div>
-                                    <div className="flex items-center justify-center gap-2">
-                                      <div className={cn("w-2.5 h-2.5 rounded-full", tone.dot)}></div>
-                                      <div className={cn("font-black text-sm", workshopConfig.tone === tone.id ? "text-amber-800" : "text-slate-700")}>{tone.label}</div>
-                                    </div>
+                                    <span className="truncate">{elem}</span>
+                                    {workshopConfig.element === elem && <CheckCircle className="w-5 h-5 text-amber-600" />}
                                   </button>
                                 ))}
                               </div>
@@ -1024,57 +1330,60 @@ export default function App() {
                      <div className="sticky bottom-0 pt-5">
                        <div className="rounded-3xl bg-white/70 backdrop-blur-md border border-white/60 shadow-lg p-4">
                          <div className="flex flex-wrap gap-2 mb-3">
-                           {workshopConfig.style && (
-                            <span className="px-2.5 py-1 rounded-full text-xs font-bold bg-[var(--app-primary-soft-bg)] text-[var(--app-primary)] border border-[var(--app-primary-soft-border)]">
-                               风格：{{ink: '水墨国风', anime: 'Q版动画', oil: '厚涂油画', pixel: '像素艺术'}[workshopConfig.style]}
+                           {workshopConfig.template && (
+                             <span className="px-2.5 py-1 rounded-full text-xs font-bold bg-[var(--app-primary-soft-bg)] text-[var(--app-primary)] border border-[var(--app-primary-soft-border)]">
+                               模版：{{comic: '连环画风格', sketch: '速记风格'}[workshopConfig.template]}
                              </span>
-                           )}
-                           {workshopConfig.theme && (
-                            <span className="px-2.5 py-1 rounded-full text-xs font-bold bg-emerald-100 text-emerald-800 border border-emerald-200">
-                               主角：{workshopConfig.theme}
+                            )}
+                            {workshopConfig.scope && (
+                             <span className="px-2.5 py-1 rounded-full text-xs font-bold bg-emerald-100 text-emerald-800 border border-emerald-200">
+                               范围：{{full: '生成全文', single: '单一主题句'}[workshopConfig.scope]}
                              </span>
-                           )}
-                           {workshopConfig.tone && (
-                             <span className="px-2.5 py-1 rounded-full text-xs font-bold bg-amber-100 text-amber-700 border border-amber-200">
-                               氛围：{{cold: '清冷肃杀', warm: '热血激昂', lonely: '苍凉孤寂'}[workshopConfig.tone]}
-                             </span>
-                           )}
+                            )}
+                            {workshopConfig.element && (
+                              <span className="px-2.5 py-1 rounded-full text-xs font-bold bg-amber-100 text-amber-700 border border-amber-200">
+                                元素：{workshopConfig.element}
+                              </span>
+                            )}
                          </div>
 
                         <div className="flex gap-3">
-                          <button
-                            onClick={() => setWorkshopQuestion(prev => (prev === 'tone' ? 'theme' : prev === 'theme' ? 'style' : 'style'))}
-                            disabled={workshopQuestion === 'style'}
-                            className="flex-1 py-4 bg-white text-slate-700 rounded-2xl font-black text-lg border border-white/70 hover:bg-slate-50 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-                          >
-                            上一步
-                          </button>
+                           <button
+                             onClick={() => setWorkshopQuestion(prev => (prev === 'element' ? 'scope' : prev === 'scope' ? 'template' : 'template'))}
+                             disabled={workshopQuestion === 'template'}
+                             className="flex-1 py-4 bg-white text-slate-700 rounded-2xl font-black text-lg border border-white/70 hover:bg-slate-50 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                           >
+                             上一步
+                           </button>
 
-                          <button
-                            onClick={() => {
-                              if (workshopQuestion === 'style') setWorkshopQuestion('theme')
-                              else if (workshopQuestion === 'theme') setWorkshopQuestion('tone')
-                              else handleGenerateImage()
-                            }}
-                            disabled={
-                              (workshopQuestion === 'style' && !workshopConfig.style) ||
-                              (workshopQuestion === 'theme' && !workshopConfig.theme) ||
-                              (workshopQuestion === 'tone' && (!workshopConfig.tone || isGeneratingImage))
-                            }
-                            className="flex-[1.4] py-4 bg-slate-900 text-white rounded-2xl font-black text-lg hover:bg-slate-800 hover:shadow-lg hover:scale-[1.01] active:scale-[0.99] transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-3 shadow-slate-200"
-                          >
-                            {isGeneratingImage ? (
-                              <div className="w-6 h-6 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
-                            ) : (
-                              <Sparkles className="w-6 h-6" />
-                            )}
-                            <span>
-                              {workshopQuestion === 'tone'
-                                ? (!workshopConfig.tone ? '请选择氛围色调' : '开始生成作品')
-                                : ((workshopQuestion === 'style' && !workshopConfig.style) || (workshopQuestion === 'theme' && !workshopConfig.theme) ? '请先完成本题' : '下一题')}
-                            </span>
-                          </button>
-                        </div>
+                           <button
+                             onClick={() => {
+                               if (workshopQuestion === 'template') setWorkshopQuestion('scope')
+                               else if (workshopQuestion === 'scope') {
+                                 if (workshopConfig.scope === 'single') setWorkshopQuestion('element')
+                                 else handleGenerateImage()
+                               }
+                               else handleGenerateImage()
+                             }}
+                             disabled={
+                               (workshopQuestion === 'template' && !workshopConfig.template) ||
+                               (workshopQuestion === 'scope' && !workshopConfig.scope) ||
+                               (workshopQuestion === 'element' && (!workshopConfig.element || isGeneratingImage || workshopRemaining <= 0))
+                             }
+                             className="flex-[1.4] py-4 bg-slate-900 text-white rounded-2xl font-black text-lg hover:bg-slate-800 hover:shadow-lg hover:scale-[1.01] active:scale-[0.99] transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-3 shadow-slate-200"
+                           >
+                             {isGeneratingImage ? (
+                               <div className="w-6 h-6 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
+                             ) : (
+                               <Sparkles className="w-6 h-6" />
+                             )}
+                             <span>
+                               {workshopQuestion === 'element' || (workshopQuestion === 'scope' && workshopConfig.scope === 'full')
+                                 ? (workshopRemaining <= 0 ? '今日次数已用完' : '开始生成作品')
+                                 : '下一题'}
+                             </span>
+                           </button>
+                         </div>
                        </div>
                      </div>
                    </div>
@@ -1086,7 +1395,7 @@ export default function App() {
                  <div className="flex flex-col items-center justify-center py-20 animate-in fade-in duration-700">
                    <div className="w-24 h-24 border-4 border-slate-200 border-t-slate-900 rounded-full animate-spin mb-8"></div>
                    <h3 className="text-2xl font-black text-slate-900 animate-pulse mb-2">AI 正在挥毫泼墨...</h3>
-                   <p className="text-slate-500">正在根据您的选择构图：{workshopConfig.theme} / {workshopConfig.style}</p>
+                   <p className="text-slate-500">正在根据您的选择构图：{workshopConfig.scope === 'single' ? workshopConfig.element : workshopConfig.scope === 'full' ? '全文意境' : ''} / {{comic: '连环画', sketch: '速记'}[workshopConfig.template]}</p>
                  </div>
               )}
 
@@ -1101,11 +1410,23 @@ export default function App() {
                         alt="AI Generated" 
                       />
                       <div className="absolute top-4 left-4 bg-black/60 text-white text-xs px-2 py-1 rounded backdrop-blur-md">
-                        风格：{{ink: '水墨国风', anime: 'Q版动画', oil: '厚涂油画', pixel: '像素艺术'}[workshopConfig.style]}
+                        风格：{{comic: '连环画', sketch: '速记'}[workshopConfig.template]}
                       </div>
-                      <div className="absolute inset-0 bg-black/40 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
-                        <button className="bg-white text-slate-900 px-4 py-2 rounded-full font-medium flex items-center gap-2 hover:bg-slate-100">
-                          <Download className="w-4 h-4" /> 保存作品
+                      <div className="absolute inset-0 bg-black/40 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity gap-3">
+                        <button 
+                          onClick={() => handleSaveDrawing(selectedCourse, '/images/workshop/congjunxing.jpg')}
+                          className="bg-white text-slate-900 px-4 py-2 rounded-full font-medium flex items-center gap-2 hover:bg-slate-100 shadow-lg transform hover:scale-105 transition-all"
+                        >
+                          <Download className="w-4 h-4" /> 保存图片
+                        </button>
+                        <button 
+                          onClick={() => {
+                            handleSaveDrawing(selectedCourse, '/images/workshop/congjunxing.jpg')
+                            setShowReportModal(true)
+                          }}
+                          className="bg-[var(--app-primary)] text-[var(--app-primary-contrast)] px-4 py-2 rounded-full font-medium flex items-center gap-2 hover:opacity-90 shadow-lg transform hover:scale-105 transition-all"
+                        >
+                          <Award className="w-4 h-4" /> 记录到档案
                         </button>
                       </div>
                     </div>
@@ -1128,10 +1449,21 @@ export default function App() {
                       再画一张
                     </button>
                     <button 
-                      onClick={() => setWorkshopStep('course-selection')}
-                      className="px-6 py-2 bg-[var(--app-primary)] text-[var(--app-primary-contrast)] rounded-lg font-medium hover:opacity-90 transition-colors shadow-md shadow-black/10"
+                      onClick={() => handleSaveDrawing(selectedCourse, '/images/workshop/congjunxing.jpg')}
+                      className="px-6 py-2 bg-white border border-slate-200 text-slate-600 rounded-lg font-medium hover:bg-slate-50 transition-colors shadow-sm"
                     >
-                      返回工坊首页
+                      <Download className="w-4 h-4 inline-block mr-2" />
+                      保存图片
+                    </button>
+                    <button 
+                      onClick={() => {
+                        handleSaveDrawing(selectedCourse, '/images/workshop/congjunxing.jpg')
+                        setShowReportModal(true)
+                      }}
+                      className="px-6 py-2 bg-[var(--app-primary)] text-[var(--app-primary-contrast)] rounded-lg font-medium hover:opacity-90 transition-colors shadow-md shadow-black/10 flex items-center gap-2"
+                    >
+                      <Award className="w-4 h-4" />
+                      记录到学情档案
                     </button>
                   </div>
                 </div>
@@ -1295,7 +1627,41 @@ export default function App() {
                     <RecordingButton 
                       isRecording={isRecording} 
                       onClick={handleRecordToggle}
+                      disabled={isEvaluating}
                     />
+                  </div>
+
+                  <div className="mt-3 bg-white rounded-xl border border-slate-200 p-4 shadow-sm">
+                    <div className="flex items-center justify-between mb-2">
+                      <div className="text-xs font-bold text-slate-500">识别文本（可修改）</div>
+                      <button 
+                        onClick={() => setShowRecognizedText(!showRecognizedText)}
+                        className="text-slate-400 hover:text-slate-600 transition-colors"
+                        title={showRecognizedText ? '隐藏' : '显示'}
+                      >
+                        {showRecognizedText ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                      </button>
+                    </div>
+                    {showRecognizedText && (
+                      <div className="animate-in fade-in slide-in-from-top-2 duration-200">
+                        <textarea
+                          value={reciteText}
+                          onChange={(e) => setReciteText(e.target.value)}
+                          rows={2}
+                          placeholder="背诵后这里会出现识别内容，也可以手动补充或修改～"
+                          className="w-full resize-none rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 outline-none focus:ring-2 focus:ring-slate-900/10 focus:border-slate-900 placeholder:text-slate-400"
+                        />
+                        <div className="mt-2 flex justify-end">
+                          <button
+                            onClick={handleEvaluateByText}
+                            disabled={isRecording || isEvaluating || !reciteText.trim()}
+                            className="px-3 py-2 rounded-lg text-xs font-bold bg-slate-900 text-white disabled:opacity-50 disabled:cursor-not-allowed"
+                          >
+                            用当前文本重新评测
+                          </button>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 </div>
               ) : (
@@ -1330,7 +1696,41 @@ export default function App() {
                     isRecording={isRecording} 
                     onClick={handleRecordToggle}
                     label="开始无图挑战"
+                    disabled={isEvaluating}
                   />
+
+                  <div className="mt-8 w-full max-w-xl bg-white rounded-xl border border-slate-200 p-4 shadow-sm">
+                    <div className="flex items-center justify-between mb-2">
+                      <div className="text-xs font-bold text-slate-500">识别文本（可修改）</div>
+                      <button 
+                        onClick={() => setShowRecognizedText(!showRecognizedText)}
+                        className="text-slate-400 hover:text-slate-600 transition-colors"
+                        title={showRecognizedText ? '隐藏' : '显示'}
+                      >
+                        {showRecognizedText ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                      </button>
+                    </div>
+                    {showRecognizedText && (
+                      <div className="animate-in fade-in slide-in-from-top-2 duration-200">
+                        <textarea
+                          value={reciteText}
+                          onChange={(e) => setReciteText(e.target.value)}
+                          rows={3}
+                          placeholder="背诵后这里会出现识别内容，也可以手动补充或修改～"
+                          className="w-full resize-none rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 outline-none focus:ring-2 focus:ring-slate-900/10 focus:border-slate-900 placeholder:text-slate-400"
+                        />
+                        <div className="mt-2 flex justify-end">
+                          <button
+                            onClick={handleEvaluateByText}
+                            disabled={isRecording || isEvaluating || !reciteText.trim()}
+                            className="px-3 py-2 rounded-lg text-xs font-bold bg-slate-900 text-white disabled:opacity-50 disabled:cursor-not-allowed"
+                          >
+                            用当前文本重新评测
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
                   
                   {/* AI Drawing Entry (Bottom right optional entry) */}
                   {!isRecording && showEvaluation && (
@@ -1495,54 +1895,78 @@ export default function App() {
       </main>
 
       {/* Right Sidebar: AI Assistant */}
-      <aside className="w-96 bg-[var(--app-surface-2)] border-l border-[var(--app-border)] flex flex-col shadow-lg z-20">
-        <div className="h-16 border-b border-[var(--app-border)] flex items-center px-6 justify-between bg-[var(--app-surface-2)] shrink-0">
-          <div className="flex items-center gap-2">
+      <aside className={cn(
+        "bg-[var(--app-surface-2)] border-l border-[var(--app-border)] flex flex-col shadow-lg z-20 transition-[width] duration-300 ease-out",
+        isAssistantCollapsed ? "w-14" : "w-96"
+      )}>
+        <div className={cn(
+          "h-16 border-b border-[var(--app-border)] flex items-center justify-between bg-[var(--app-surface-2)] shrink-0 relative",
+          isAssistantCollapsed ? "px-2" : "px-6"
+        )}>
+          <div className={cn("flex items-center gap-2 min-w-0", isAssistantCollapsed ? "justify-center w-full" : "")}>
             <Sparkles className="w-5 h-5 text-[var(--app-accent)]" />
-            <span className="font-bold text-slate-800">AI 智能助教</span>
+            {!isAssistantCollapsed && <span className="font-bold text-slate-800 truncate">AI 智能助教</span>}
           </div>
+          <button
+            onClick={() => setIsAssistantCollapsed(v => !v)}
+            className={cn(
+              "h-9 w-9 rounded-xl border border-[var(--app-border)] bg-white/70 backdrop-blur-sm hover:bg-white transition-colors flex items-center justify-center",
+              isAssistantCollapsed ? "absolute right-2" : ""
+            )}
+            title={isAssistantCollapsed ? "展开 AI 助教" : "折叠 AI 助教"}
+          >
+            <ChevronRight className={cn("w-4 h-4 text-[var(--app-text)] transition-transform", isAssistantCollapsed ? "" : "rotate-180")} />
+          </button>
         </div>
 
-        {/* Fixed Resource Card at Top */}
-        <div className="p-5 bg-gradient-to-b from-[var(--app-surface-2)] to-[var(--app-bg)] border-b border-[var(--app-border)] shrink-0 z-20">
-          <div className="bg-[var(--app-surface-2)] rounded-2xl border border-[var(--app-border)] p-4 shadow-sm hover:shadow-lg transition-all duration-300 cursor-pointer group relative overflow-hidden">
-            <div className="absolute top-0 right-0 w-16 h-16 bg-[var(--app-accent-soft-bg)] rounded-bl-full opacity-70 group-hover:scale-110 transition-transform"></div>
-            
-            <h4 className="font-bold text-slate-800 mb-3 flex items-center gap-2 text-xs uppercase tracking-wider text-[var(--app-accent)] relative z-10">
-              <span className="bg-[var(--app-accent-soft-bg)] p-1 rounded-md group-hover:bg-[var(--app-accent)] group-hover:text-[var(--app-accent-contrast)] transition-colors duration-300">
-                <Zap className="w-3 h-3" />
-              </span>
-              课堂拓展资源
-            </h4>
-            <div className="flex gap-3 items-center relative z-10">
-              <div className="w-20 h-14 bg-slate-200 rounded-lg overflow-hidden shrink-0 relative shadow-inner group-hover:ring-2 ring-[var(--app-primary-soft-border)] transition-all">
-                 <img src="/images/congjunxing.jpg" className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-700" />
-                 <div className="absolute inset-0 bg-black/10 group-hover:bg-black/20 flex items-center justify-center transition-colors">
-                   <div className="w-6 h-6 bg-white/90 rounded-full flex items-center justify-center backdrop-blur-sm shadow-sm group-hover:scale-110 transition-transform">
-                    <Play className="w-3 h-3 text-[var(--app-primary)] fill-[var(--app-primary)] ml-0.5" />
-                   </div>
-                 </div>
-              </div>
-              <div className="flex-1 min-w-0">
-                <p className="text-sm font-bold text-slate-700 truncate group-hover:text-[var(--app-primary)] transition-colors">王昌龄生平动画</p>
-                <div className="flex items-center gap-2 mt-1">
-                  <span className="text-[10px] font-medium px-1.5 py-0.5 bg-slate-100 text-slate-500 rounded border border-slate-200">3:45</span>
-                  <span className="text-[10px] text-amber-500 flex items-center gap-0.5 font-medium">
-                    <Star className="w-2.5 h-2.5 fill-current" /> 必看
+        {isAssistantCollapsed ? (
+          <div className="flex-1 flex items-center justify-center bg-[var(--app-bg)]">
+            <button
+              onClick={() => setIsAssistantCollapsed(false)}
+              className="h-10 w-10 rounded-2xl bg-[var(--app-primary)] text-[var(--app-primary-contrast)] shadow-sm shadow-black/10 flex items-center justify-center hover:opacity-90 transition-opacity"
+              title="展开 AI 助教"
+            >
+              <Sparkles className="w-5 h-5" />
+            </button>
+          </div>
+        ) : (
+          <>
+            <div className="p-5 bg-gradient-to-b from-[var(--app-surface-2)] to-[var(--app-bg)] border-b border-[var(--app-border)] shrink-0 z-20">
+              <div className="bg-[var(--app-surface-2)] rounded-2xl border border-[var(--app-border)] p-4 shadow-sm hover:shadow-lg transition-all duration-300 cursor-pointer group relative overflow-hidden">
+                <div className="absolute top-0 right-0 w-16 h-16 bg-[var(--app-accent-soft-bg)] rounded-bl-full opacity-70 group-hover:scale-110 transition-transform"></div>
+                <h4 className="font-bold text-slate-800 mb-3 flex items-center gap-2 text-xs uppercase tracking-wider text-[var(--app-accent)] relative z-10">
+                  <span className="bg-[var(--app-accent-soft-bg)] p-1 rounded-md group-hover:bg-[var(--app-accent)] group-hover:text-[var(--app-accent-contrast)] transition-colors duration-300">
+                    <Zap className="w-3 h-3" />
                   </span>
+                  课堂拓展资源
+                </h4>
+                <div className="flex gap-3 items-center relative z-10">
+                  <div className="w-20 h-14 bg-slate-200 rounded-lg overflow-hidden shrink-0 relative shadow-inner group-hover:ring-2 ring-[var(--app-primary-soft-border)] transition-all">
+                    <img src="/images/congjunxing.jpg" className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-700" />
+                    <div className="absolute inset-0 bg-black/10 group-hover:bg-black/20 flex items-center justify-center transition-colors">
+                      <div className="w-6 h-6 bg-white/90 rounded-full flex items-center justify-center backdrop-blur-sm shadow-sm group-hover:scale-110 transition-transform">
+                        <Play className="w-3 h-3 text-[var(--app-primary)] fill-[var(--app-primary)] ml-0.5" />
+                      </div>
+                    </div>
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-bold text-slate-700 truncate group-hover:text-[var(--app-primary)] transition-colors">王昌龄生平动画</p>
+                    <div className="flex items-center gap-2 mt-1">
+                      <span className="text-[10px] font-medium px-1.5 py-0.5 bg-slate-100 text-slate-500 rounded border border-slate-200">3:45</span>
+                      <span className="text-[10px] text-amber-500 flex items-center gap-0.5 font-medium">
+                        <Star className="w-2.5 h-2.5 fill-current" /> 必看
+                      </span>
+                    </div>
+                  </div>
                 </div>
               </div>
             </div>
-          </div>
-        </div>
 
-        {/* Scrollable Area */}
-        <div className="flex-1 overflow-y-auto p-4 space-y-4 bg-slate-50/30">
-          
-          {/* Unified Companion & Feedback Card */}
-          {renderCombinedRightCard()}
-
-        </div>
+            <div className="flex-1 overflow-y-auto p-4 space-y-4 bg-[var(--app-bg)]">
+              {renderCombinedRightCard()}
+            </div>
+          </>
+        )}
       </aside>
 
       {showReportModal && <ReportModal />}
